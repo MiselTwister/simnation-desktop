@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SimNation Radio",
+  "version": "0.1.0",
+  "identifier": "com.simnationradio.desktop",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devUrl": "http://localhost:8000",
+    "frontendDist": "https://simnationradio.com"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "SimNation Radio",
+        "width": 1280,
+        "height": 720,
+        "decorations": false,
+        "transparent": false,
+        "visible": true
+      },
+      {
+        "label": "overlay",
+        "title": "SNR Smart Overlay",
+        "url": "/overlay",
+        "width": 450,
+        "height": 450,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

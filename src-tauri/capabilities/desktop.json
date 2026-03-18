@@ -1,0 +1,19 @@
+{
+  "identifier": "desktop-capability",
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
+  ],
+  "windows": [
+    "main"
+  ],
+"permissions": [
+  "core:default",
+  "opener:default",
+  "global-shortcut:default",
+  "autostart:default",
+  "notification:default",
+  "notification:allow-request-permission" 
+]
+}
