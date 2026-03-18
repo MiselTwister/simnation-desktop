@@ -7,7 +7,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-// 🕵️ Game detector import
+use tauri_plugin_updater::UpdaterExt; // ✅ Added for v2 Updater
 use sysinfo::System;
 
 #[tauri::command]
@@ -79,11 +79,12 @@ fn update_hotkeys(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // ✅ REQUIRED: Register the updater plugin here
+        .plugin(tauri_plugin_updater::init()) 
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--silent"])))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        // 💾 PRO WAY: Initialize the window state plugin here
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             // --- 🚛 THE GAME DETECTOR LOOP ---
@@ -102,27 +103,21 @@ pub fn run() {
                     });
 
                     if is_running && !was_running {
-                        // 🎮 GAME STARTED: Show Overlay
                         if let Some(window) = handle.get_webview_window("overlay") {
                             let _ = window.show();
                             let _ = window.unminimize();
                             let _ = window.set_always_on_top(true);
                         }
-                        
-                        // 🧘 FOCUS MODE: Hide Main Window
                         if let Some(main_window) = handle.get_webview_window("main") {
                             let _ = main_window.hide();
                         }
-                        
                         was_running = true;
                     } else if !is_running && was_running {
-                        // 🛑 GAME STOPPED: Hide Overlay
                         if let Some(window) = handle.get_webview_window("overlay") {
                             let _ = window.hide();
                         }
                         was_running = false;
                     }
-
                     std::thread::sleep(Duration::from_secs(5));
                 }
             });
