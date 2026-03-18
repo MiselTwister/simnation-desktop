@@ -1,12 +1,14 @@
 use std::str::FromStr;
+use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
-// 🚨 Kept the ShortcutState to prevent the double-firing bug!
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+// 🕵️ New import for the game detector
+use sysinfo::System;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -55,7 +57,6 @@ fn update_hotkeys(
 
     unreg(&old_play); unreg(&old_stop); unreg(&old_overlay);
 
-    // 🚨 FIX: Added `event.state == ShortcutState::Pressed` to all custom hotkeys
     if let Ok(new) = Shortcut::from_str(&new_play) {
         let _ = manager.on_shortcut(new, move |app_handle, _, event| { 
             if event.state == ShortcutState::Pressed { let _ = app_handle.emit("media-play", ()); }
@@ -83,6 +84,42 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            // --- 🚛 THE GAME DETECTOR LOOP ---
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let mut sys = System::new_all();
+                let games = ["eurotrucks2.exe", "amtrucks.exe", "eurotrucks2", "amtrucks"];
+                let mut was_running = false;
+
+                loop {
+                    // Refresh process list
+                    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+                    
+                    // FIXED: Using .iter() and pattern matching |(_, process)| for broad compatibility
+                    let is_running = sys.processes().iter().any(|(_, process)| {
+                        let name = process.name().to_string_lossy().to_lowercase();
+                        games.iter().any(|&game| name.contains(game))
+                    });
+
+                    if is_running && !was_running {
+                        if let Some(window) = handle.get_webview_window("overlay") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_always_on_top(true);
+                        }
+                        was_running = true;
+                    } else if !is_running && was_running {
+                        if let Some(window) = handle.get_webview_window("overlay") {
+                            let _ = window.hide();
+                        }
+                        was_running = false;
+                    }
+
+                    std::thread::sleep(Duration::from_secs(5));
+                }
+            });
+
+            // --- TRAY & MENU ---
             let show_i = MenuItem::with_id(app, "show", "Open SimNation", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit Radio", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
@@ -107,7 +144,6 @@ pub fn run() {
 
             let manager = app.global_shortcut();
             
-            // 🚨 FIX: Added `ShortcutState::Pressed` to hardware media keys
             if let Ok(k) = Shortcut::from_str("MediaPlayPause") {
                 let _ = manager.on_shortcut(k, move |app_handle, _, event| { 
                     if event.state == ShortcutState::Pressed { let _ = app_handle.emit("media-hardware-toggle", ()); }
