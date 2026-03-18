@@ -1,0 +1,33 @@
+name: Build SimNation Installer
+
+on:
+  workflow_dispatch: # This adds a "Run Workflow" button on GitHub so you control when it builds!
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write # Allows GitHub to upload the .exe file
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install NPM dependencies
+        run: npm install
+
+      - name: Build Tauri App & Create Installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__ # Automatically grabs "0.1.0" from your tauri.conf.json
+          releaseName: "SimNation Radio v__VERSION__"
+          releaseBody: "The official SimNation Radio desktop app. 24/7 Non-Stop Hits for the virtual roads!"
+          releaseDraft: false
+          prerelease: false
