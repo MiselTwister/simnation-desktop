@@ -7,7 +7,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-// 🕵️ New import for the game detector
+// 🕵️ Game detector import
 use sysinfo::System;
 
 #[tauri::command]
@@ -83,6 +83,8 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--silent"])))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // 💾 PRO WAY: Initialize the window state plugin here
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             // --- 🚛 THE GAME DETECTOR LOOP ---
             let handle = app.handle().clone();
@@ -92,23 +94,29 @@ pub fn run() {
                 let mut was_running = false;
 
                 loop {
-                    // Refresh process list
                     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
                     
-                    // FIXED: Using .iter() and pattern matching |(_, process)| for broad compatibility
                     let is_running = sys.processes().iter().any(|(_, process)| {
                         let name = process.name().to_string_lossy().to_lowercase();
                         games.iter().any(|&game| name.contains(game))
                     });
 
                     if is_running && !was_running {
+                        // 🎮 GAME STARTED: Show Overlay
                         if let Some(window) = handle.get_webview_window("overlay") {
                             let _ = window.show();
                             let _ = window.unminimize();
                             let _ = window.set_always_on_top(true);
                         }
+                        
+                        // 🧘 FOCUS MODE: Hide Main Window
+                        if let Some(main_window) = handle.get_webview_window("main") {
+                            let _ = main_window.hide();
+                        }
+                        
                         was_running = true;
                     } else if !is_running && was_running {
+                        // 🛑 GAME STOPPED: Hide Overlay
                         if let Some(window) = handle.get_webview_window("overlay") {
                             let _ = window.hide();
                         }
@@ -132,7 +140,7 @@ pub fn run() {
                         if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); }
                     }
                     "quit" => { std::process::exit(0); }
-                    _ => {}
+                    _ => { }
                 })
                 .on_tray_icon_event(|tray, event| match event {
                     TrayIconEvent::Click { button: MouseButton::Left, .. } => {

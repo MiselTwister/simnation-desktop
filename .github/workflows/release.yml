@@ -1,13 +1,13 @@
 name: Build SimNation Installer
 
 on:
-  workflow_dispatch: # This adds a "Run Workflow" button on GitHub so you control when it builds!
+  workflow_dispatch: # Manual trigger via the "Run Workflow" button
 
 jobs:
   build-windows:
     runs-on: windows-latest
     permissions:
-      contents: write # Allows GitHub to upload the .exe file
+      contents: write # Required to create the Release and upload files
 
     steps:
       - name: Checkout code
@@ -25,9 +25,13 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 🔐 NEW: These connect your GitHub Secrets to the build process
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__ # Automatically grabs "0.1.0" from your tauri.conf.json
+          tagName: v__VERSION__ 
           releaseName: "SimNation Radio v__VERSION__"
-          releaseBody: "The official SimNation Radio desktop app. 24/7 Non-Stop Hits for the virtual roads!"
+          # 📝 This is the text users see in the update popup!
+          releaseBody: "A new version of SimNation Radio is available! Optimization fixes and Game Detector updates included. Keep on truckin'!"
           releaseDraft: false
           prerelease: false
