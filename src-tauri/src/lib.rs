@@ -7,7 +7,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-use tauri_plugin_updater::UpdaterExt; // ✅ Added for v2 Updater
+// 🕵️ Game detector import
 use sysinfo::System;
 
 #[tauri::command]
@@ -79,8 +79,8 @@ fn update_hotkeys(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        // ✅ REQUIRED: Register the updater plugin here
-        .plugin(tauri_plugin_updater::init()) 
+        // ✅ FIXED: V2 uses the Builder pattern for the updater
+        .plugin(tauri_plugin_updater::Builder::new().build()) 
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--silent"])))
         .plugin(tauri_plugin_opener::init())
