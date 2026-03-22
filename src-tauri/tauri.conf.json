@@ -25,7 +25,7 @@
         "label": "overlay",
         "title": "SNR Smart Overlay",
         "url": "/overlay",
-        "width": 450,
+        "width": 600, 
         "height": 450,
         "decorations": false,
         "transparent": true,
@@ -54,6 +54,9 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "resources": [
+      "resources/scs-telemetry.dll"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

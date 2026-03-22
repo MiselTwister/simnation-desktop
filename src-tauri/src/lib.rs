@@ -11,14 +11,17 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use sysinfo::System;
 
-// 🚛 Telemetry & System Imports
-use scs_sdk_telemetry::shared_memory::SharedMemory;
+// 🚛 Telemetry & System Imports 
+use scs_sdk_telemetry::shared_memory::SharedMemory; 
 use winreg::enums::*;
 use winreg::RegKey;
-use discord_rich_presence::{Backend, DiscordIpc, DiscordIpcClient};
+use discord_rich_presence::{DiscordIpc, DiscordIpcClient}; 
 
-// --- 🎮 DISCORD STATE ---
+// --- 🎮 STATES ---
 struct DiscordState(Arc<Mutex<Option<DiscordIpcClient>>>);
+struct TelemetryState {
+    is_mock: Arc<Mutex<bool>>,
+}
 
 // --- 🛠️ COMMAND: ONE-CLICK TELEMETRY INSTALLER ---
 #[tauri::command]
@@ -27,28 +30,27 @@ async fn install_telemetry_plugin(app: AppHandle) -> Result<String, String> {
     let steam_key = hkcu.open_subkey("Software\\Valve\\Steam").map_err(|_| "Steam not found in registry")?;
     let steam_path: String = steam_key.get_value("SteamPath").map_err(|_| "Could not find SteamPath")?;
     
-    let mut installed_games = Vec::new();
+    let mut installed_games: Vec<String> = Vec::new();
     let games = [
         ("Euro Truck Simulator 2", "eurotrucks2"),
         ("American Truck Simulator", "amtrucks")
     ];
 
-    for (name, folder) in games {
+    for (name, _folder) in games {
         let mut plugin_path = PathBuf::from(&steam_path);
         plugin_path.push("steamapps/common");
         plugin_path.push(name);
         plugin_path.push("bin/win_x64/plugins");
 
-        // Create directory if it doesn't exist
-        if let Err(_) = std::fs::create_dir_all(&plugin_path) { continue; }
+        let _ = std::fs::create_dir_all(&plugin_path);
 
-        // Path to our bundled DLL (defined in tauri.conf.json resources)
         let resource_path = app.path().resolve("resources/scs-telemetry.dll", tauri::path::BaseDirectory::Resource)
             .map_err(|_| "Bundled DLL not found")?;
 
         plugin_path.push("scs-telemetry.dll");
         std::fs::copy(resource_path, plugin_path).map_err(|e| format!("Failed to copy DLL: {}", e))?;
-        installed_games.push(name);
+        
+        installed_games.push(name.to_string());
     }
 
     if installed_games.is_empty() {
@@ -57,12 +59,21 @@ async fn install_telemetry_plugin(app: AppHandle) -> Result<String, String> {
     Ok(format!("Installed SNR Telemetry to: {}", installed_games.join(", ")))
 }
 
+// --- 🧪 COMMAND: TOGGLE MOCK TELEMETRY ---
+#[tauri::command]
+fn toggle_telemetry_mock(state: State<'_, TelemetryState>) -> bool {
+    let mut is_mock = state.is_mock.lock().unwrap();
+    *is_mock = !*is_mock;
+    *is_mock
+}
+
 // --- 🔊 COMMAND: DISCORD RICH PRESENCE ---
 #[tauri::command]
 fn update_discord(state: State<'_, DiscordState>, details: String, state_text: String, art_key: String) -> Result<(), String> {
     let mut client_lock = state.0.lock().unwrap();
+    
     if client_lock.is_none() {
-        let mut client = DiscordIpcClient::new("YOUR_DISCORD_CLIENT_ID").map_err(|_| "Client Init Failed")?;
+        let mut client = DiscordIpcClient::new("1342502781444161567").map_err(|_| "Client Init Failed")?;
         let _ = client.connect();
         *client_lock = Some(client);
     }
@@ -81,21 +92,46 @@ fn update_discord(state: State<'_, DiscordState>, details: String, state_text: S
 // --- 🚛 TELEMETRY STREAMER ---
 fn start_telemetry_loop(handle: AppHandle) {
     std::thread::spawn(move || {
-        let mut shared_mem = SharedMemory::connect();
+        let mut tick = 0;
         loop {
-            if let Ok(data) = shared_mem.read() {
+            let is_mock = {
+                let state = handle.state::<TelemetryState>();
+                let val = *state.is_mock.lock().unwrap();
+                val
+            };
+
+            if is_mock {
+                tick += 1;
                 let payload = serde_json::json!({
-                    "speed": data.truck.common.speed.kmph,
-                    "gear": data.truck.common.gear.displayed,
-                    "fuel": data.truck.common.fuel.value,
-                    "fuel_max": data.truck.common.fuel.capacity,
-                    "damage": data.truck.common.damage.total,
-                    "blinkers": {
-                        "l": data.truck.common.lights.blinker_left_on,
-                        "r": data.truck.common.lights.blinker_right_on
-                    }
+                    "speed": 80.0 + (tick as f64 % 20.0),
+                    "gear": "12",
+                    "fuel": 450.0 - (tick as f64 % 50.0),
+                    "fuel_max": 600,
+                    "damage": 0.05,
+                    "blinkers": { "l": tick % 40 < 20, "r": false }
                 });
                 let _ = handle.emit("telemetry-update", payload);
+            } else {
+                if let Ok(mut shared_mem) = SharedMemory::connect() {
+                    let mut data = shared_mem.read(); 
+                    
+                    // 🛡️ FIXED: to_json() already returns a parsed object, no from_str needed!
+                    if let Ok(parsed) = data.to_json() {
+                        let payload = serde_json::json!({
+                            "speed": parsed["truck"]["current"]["speed"].as_f64().unwrap_or(0.0) * 3.6,
+                            "gear": parsed["truck"]["current"]["gear"].as_i64().unwrap_or(0),
+                            "fuel": parsed["truck"]["current"]["fuel"].as_f64().unwrap_or(0.0),
+                            "fuel_max": parsed["truck"]["constants"]["capacity"]["fuel"].as_f64().unwrap_or(600.0),
+                            "damage": parsed["truck"]["current"]["damage"]["chassis"].as_f64().unwrap_or(0.0),
+                            "blinkers": {
+                                "l": parsed["truck"]["current"]["lights"]["blinker_left_on"].as_bool().unwrap_or(false),
+                                "r": parsed["truck"]["current"]["lights"]["blinker_right_on"].as_bool().unwrap_or(false)
+                            },
+                            "raw": parsed 
+                        });
+                        let _ = handle.emit("telemetry-update", payload);
+                    }
+                }
             }
             std::thread::sleep(Duration::from_millis(16)); // ~60fps
         }
@@ -162,6 +198,7 @@ fn update_hotkeys(
 pub fn run() {
     tauri::Builder::default()
         .manage(DiscordState(Arc::new(Mutex::new(None))))
+        .manage(TelemetryState { is_mock: Arc::new(Mutex::new(false)) })
         .plugin(tauri_plugin_updater::Builder::new().build()) 
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--silent"])))
@@ -171,10 +208,8 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // 🚀 Start Telemetry Bridge
             start_telemetry_loop(handle.clone());
 
-            // 🚛 Game Detector Loop
             std::thread::spawn(move || {
                 let mut sys = System::new_all();
                 let games = ["eurotrucks2.exe", "amtrucks.exe", "eurotrucks2", "amtrucks"];
@@ -202,7 +237,6 @@ pub fn run() {
                 }
             });
 
-            // Tray & Menu setup omitted for brevity but should remain as per your existing code...
             let show_i = MenuItem::with_id(app, "show", "Open SimNation", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit Radio", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
@@ -232,7 +266,11 @@ pub fn run() {
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
-            update_hotkeys, hide_overlay, install_telemetry_plugin, update_discord
+            update_hotkeys, 
+            hide_overlay, 
+            install_telemetry_plugin, 
+            update_discord, 
+            toggle_telemetry_mock
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
