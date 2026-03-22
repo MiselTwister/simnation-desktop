@@ -115,13 +115,31 @@ fn start_telemetry_loop(handle: AppHandle) {
                 if let Ok(mut shared_mem) = SharedMemory::connect() {
                     let mut data = shared_mem.read(); 
                     
-                    // 🛡️ FIXED: to_json() already returns a parsed object, no from_str needed!
                     if let Ok(parsed) = data.to_json() {
+                        
+                        // 🛡️ THE FIX: Deep Hunting in the exact folders where SCS hides the data
+                        let speed = parsed["truck"]["current"]["dashboard"]["speed"].as_f64()
+                            .or_else(|| parsed["truck"]["current"]["physics"]["speed"].as_f64())
+                            .unwrap_or(0.0) * 3.6; // converting m/s to km/h
+                            
+                        let gear = parsed["truck"]["current"]["dashboard"]["gear"].as_i64()
+                            .or_else(|| parsed["truck"]["current"]["engine"]["gear"].as_i64())
+                            .unwrap_or(0);
+                            
+                        let fuel = parsed["truck"]["current"]["dashboard"]["fuel_amount"].as_f64()
+                            .or_else(|| parsed["truck"]["current"]["dashboard"]["fuel"].as_f64())
+                            .or_else(|| parsed["truck"]["current"]["fluid"]["fuel"].as_f64())
+                            .unwrap_or(0.0);
+                            
+                        let fuel_max = parsed["truck"]["constants"]["capacity"]["fuel"].as_f64()
+                            .or_else(|| parsed["truck"]["constants"]["motor"]["fuel_capacity"].as_f64())
+                            .unwrap_or(600.0);
+
                         let payload = serde_json::json!({
-                            "speed": parsed["truck"]["current"]["speed"].as_f64().unwrap_or(0.0) * 3.6,
-                            "gear": parsed["truck"]["current"]["gear"].as_i64().unwrap_or(0),
-                            "fuel": parsed["truck"]["current"]["fuel"].as_f64().unwrap_or(0.0),
-                            "fuel_max": parsed["truck"]["constants"]["capacity"]["fuel"].as_f64().unwrap_or(600.0),
+                            "speed": speed,
+                            "gear": gear,
+                            "fuel": fuel,
+                            "fuel_max": fuel_max,
                             "damage": parsed["truck"]["current"]["damage"]["chassis"].as_f64().unwrap_or(0.0),
                             "blinkers": {
                                 "l": parsed["truck"]["current"]["lights"]["blinker_left_on"].as_bool().unwrap_or(false),
@@ -207,6 +225,10 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let handle = app.handle().clone();
+
+            if let Some(overlay_window) = handle.get_webview_window("overlay") {
+                let _ = overlay_window.hide();
+            }
 
             start_telemetry_loop(handle.clone());
 
