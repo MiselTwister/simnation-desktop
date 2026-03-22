@@ -24,10 +24,9 @@ fn toggle_overlay_window(app: &AppHandle) {
         } else {
             let _ = window.show();
             let _ = window.unminimize();
-            // 🔓 UNLOCKED: We no longer ignore cursor events.
-            // This allows the DJ to click and drag the window.
+            // 🔓 UNLOCKED: Stays interactive so DJs can move it.
             let _ = window.set_always_on_top(true);
-            let _ = window.set_focus(); // Focus it so they can interact immediately
+            let _ = window.set_focus(); 
         }
     }
 }
@@ -87,7 +86,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            // --- 🚛 THE GAME DETECTOR LOOP ---
+            // --- 🚛 THE GAME DETECTOR LOOP (FOCUS MODE) ---
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut sys = System::new_all();
@@ -102,20 +101,29 @@ pub fn run() {
                         games.iter().any(|&game| name.contains(game))
                     });
 
+                    // 🏁 GAME STARTED
                     if is_running && !was_running {
                         if let Some(window) = handle.get_webview_window("overlay") {
                             let _ = window.show();
                             let _ = window.unminimize();
-                            // 🔓 UNLOCKED: Stays on top but allows interaction
                             let _ = window.set_always_on_top(true);
                         }
                         if let Some(main_window) = handle.get_webview_window("main") {
                             let _ = main_window.hide();
                         }
                         was_running = true;
-                    } else if !is_running && was_running {
+                    } 
+                    // 🛑 GAME STOPPED
+                    else if !is_running && was_running {
+                        // 1. Hide the overlay
                         if let Some(window) = handle.get_webview_window("overlay") {
                             let _ = window.hide();
+                        }
+                        // 2. 🚀 RESTORE THE MAIN APP
+                        if let Some(main_window) = handle.get_webview_window("main") {
+                            let _ = main_window.show();
+                            let _ = main_window.unminimize();
+                            let _ = main_window.set_focus();
                         }
                         was_running = false;
                     }
