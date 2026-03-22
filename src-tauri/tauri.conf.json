@@ -18,7 +18,8 @@
         "height": 720,
         "decorations": false,
         "transparent": false,
-        "visible": true
+        "visible": true,
+        "center": true
       },
       {
         "label": "overlay",
@@ -31,7 +32,10 @@
         "alwaysOnTop": true,
         "visible": false,
         "skipTaskbar": true,
-        "shadow": false
+        "shadow": false,
+        "focus": false,
+        "resizable": true,
+        "fullscreen": false
       }
     ],
     "security": {

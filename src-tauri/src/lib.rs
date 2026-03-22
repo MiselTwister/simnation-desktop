@@ -7,7 +7,6 @@ use tauri::{
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-// 🕵️ Game detector import
 use sysinfo::System;
 
 #[tauri::command]
@@ -15,7 +14,7 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! SimNation Desktop is ready.", name)
 }
 
-// --- OVERLAY LOGIC ---
+// --- OVERLAY LOGIC (Unlocked Edition) ---
 fn toggle_overlay_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("overlay") {
         let is_visible = window.is_visible().unwrap_or(false);
@@ -25,8 +24,10 @@ fn toggle_overlay_window(app: &AppHandle) {
         } else {
             let _ = window.show();
             let _ = window.unminimize();
-            let _ = window.set_focus();
+            // 🔓 UNLOCKED: We no longer ignore cursor events.
+            // This allows the DJ to click and drag the window.
             let _ = window.set_always_on_top(true);
+            let _ = window.set_focus(); // Focus it so they can interact immediately
         }
     }
 }
@@ -79,7 +80,6 @@ fn update_hotkeys(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        // ✅ FIXED: V2 uses the Builder pattern for the updater
         .plugin(tauri_plugin_updater::Builder::new().build()) 
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--silent"])))
@@ -106,6 +106,7 @@ pub fn run() {
                         if let Some(window) = handle.get_webview_window("overlay") {
                             let _ = window.show();
                             let _ = window.unminimize();
+                            // 🔓 UNLOCKED: Stays on top but allows interaction
                             let _ = window.set_always_on_top(true);
                         }
                         if let Some(main_window) = handle.get_webview_window("main") {
@@ -144,19 +145,6 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
-
-            let manager = app.global_shortcut();
-            
-            if let Ok(k) = Shortcut::from_str("MediaPlayPause") {
-                let _ = manager.on_shortcut(k, move |app_handle, _, event| { 
-                    if event.state == ShortcutState::Pressed { let _ = app_handle.emit("media-hardware-toggle", ()); }
-                });
-            }
-            if let Ok(k) = Shortcut::from_str("MediaStop") {
-                let _ = manager.on_shortcut(k, move |app_handle, _, event| { 
-                    if event.state == ShortcutState::Pressed { let _ = app_handle.emit("media-stop", ()); }
-                });
-            }
 
             let args: Vec<String> = std::env::args().collect();
             if args.contains(&"--silent".to_string()) {
