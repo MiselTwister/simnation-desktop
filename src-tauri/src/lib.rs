@@ -117,22 +117,23 @@ fn start_telemetry_loop(handle: AppHandle) {
                     
                     if let Ok(parsed) = data.to_json() {
                         
-                        // 🛡️ THE FIX: Deep Hunting in the exact folders where SCS hides the data
-                        let speed = parsed["truck"]["current"]["dashboard"]["speed"].as_f64()
-                            .or_else(|| parsed["truck"]["current"]["physics"]["speed"].as_f64())
-                            .unwrap_or(0.0) * 3.6; // converting m/s to km/h
+                        // 🛡️ THE FIX: Checking the exact keys defined by your C++ Plugin!
+                        let speed = parsed["truck"]["current"]["speed"].as_f64()
+                            .or_else(|| parsed["truck"]["speed"].as_f64())
+                            .unwrap_or(0.0) * 3.6; // Converting from m/s to km/h
                             
-                        let gear = parsed["truck"]["current"]["dashboard"]["gear"].as_i64()
-                            .or_else(|| parsed["truck"]["current"]["engine"]["gear"].as_i64())
+                        // Checking "displayed_gear" and "gearDashboard"
+                        let gear = parsed["truck"]["current"]["displayed_gear"].as_i64()
+                            .or_else(|| parsed["truck"]["current"]["gearDashboard"].as_i64())
+                            .or_else(|| parsed["truck"]["current"]["gear"].as_i64())
                             .unwrap_or(0);
                             
-                        let fuel = parsed["truck"]["current"]["dashboard"]["fuel_amount"].as_f64()
-                            .or_else(|| parsed["truck"]["current"]["dashboard"]["fuel"].as_f64())
-                            .or_else(|| parsed["truck"]["current"]["fluid"]["fuel"].as_f64())
+                        let fuel = parsed["truck"]["current"]["fuel"].as_f64()
+                            .or_else(|| parsed["truck"]["fuel"].as_f64())
                             .unwrap_or(0.0);
                             
-                        let fuel_max = parsed["truck"]["constants"]["capacity"]["fuel"].as_f64()
-                            .or_else(|| parsed["truck"]["constants"]["motor"]["fuel_capacity"].as_f64())
+                        let fuel_max = parsed["truck"]["constants"]["fuel_capacity"].as_f64()
+                            .or_else(|| parsed["truck"]["constants"]["fuelCapacity"].as_f64())
                             .unwrap_or(600.0);
 
                         let payload = serde_json::json!({
