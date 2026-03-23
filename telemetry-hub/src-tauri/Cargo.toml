@@ -1,0 +1,47 @@
+[package]
+name = "telemetry-hub"
+version = "0.1.0"
+description = "SimNation Hub - All-in-One HUD & Radio"
+authors = ["SimNation Dev"]
+edition = "2021"
+
+[lib]
+name = "telemetry_hub_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+
+# 🔌 All Required Plugins
+tauri-plugin-opener = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-notification = "2" 
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 🚛 Windows API for Memory Mapping
+winapi = { version = "0.3", features = [
+    "memoryapi", 
+    "handleapi", 
+    "winnt", 
+    "winbase",
+    "winuser"
+] }
+
+# 🔍 System Info for Game Detection
+sysinfo = "0.31"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true

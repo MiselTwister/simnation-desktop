@@ -1,163 +1,15 @@
 use std::str::FromStr;
 use std::time::Duration;
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, WindowEvent, State,
+    AppHandle, Emitter, Manager, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use sysinfo::System;
 
-// 🚛 Telemetry & System Imports 
-use scs_sdk_telemetry::shared_memory::SharedMemory; 
-use winreg::enums::*;
-use winreg::RegKey;
-use discord_rich_presence::{DiscordIpc, DiscordIpcClient}; 
-
-// --- 🎮 STATES ---
-struct DiscordState(Arc<Mutex<Option<DiscordIpcClient>>>);
-struct TelemetryState {
-    is_mock: Arc<Mutex<bool>>,
-}
-
-// --- 🛠️ COMMAND: ONE-CLICK TELEMETRY INSTALLER ---
-#[tauri::command]
-async fn install_telemetry_plugin(app: AppHandle) -> Result<String, String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let steam_key = hkcu.open_subkey("Software\\Valve\\Steam").map_err(|_| "Steam not found in registry")?;
-    let steam_path: String = steam_key.get_value("SteamPath").map_err(|_| "Could not find SteamPath")?;
-    
-    let mut installed_games: Vec<String> = Vec::new();
-    let games = [
-        ("Euro Truck Simulator 2", "eurotrucks2"),
-        ("American Truck Simulator", "amtrucks")
-    ];
-
-    for (name, _folder) in games {
-        let mut plugin_path = PathBuf::from(&steam_path);
-        plugin_path.push("steamapps/common");
-        plugin_path.push(name);
-        plugin_path.push("bin/win_x64/plugins");
-
-        let _ = std::fs::create_dir_all(&plugin_path);
-
-        let resource_path = app.path().resolve("resources/scs-telemetry.dll", tauri::path::BaseDirectory::Resource)
-            .map_err(|_| "Bundled DLL not found")?;
-
-        plugin_path.push("scs-telemetry.dll");
-        std::fs::copy(resource_path, plugin_path).map_err(|e| format!("Failed to copy DLL: {}", e))?;
-        
-        installed_games.push(name.to_string());
-    }
-
-    if installed_games.is_empty() {
-        return Err("No SCS games found to install plugins into.".into());
-    }
-    Ok(format!("Installed SNR Telemetry to: {}", installed_games.join(", ")))
-}
-
-// --- 🧪 COMMAND: TOGGLE MOCK TELEMETRY ---
-#[tauri::command]
-fn toggle_telemetry_mock(state: State<'_, TelemetryState>) -> bool {
-    let mut is_mock = state.is_mock.lock().unwrap();
-    *is_mock = !*is_mock;
-    *is_mock
-}
-
-// --- 🔊 COMMAND: DISCORD RICH PRESENCE ---
-#[tauri::command]
-fn update_discord(state: State<'_, DiscordState>, details: String, state_text: String, art_key: String) -> Result<(), String> {
-    let mut client_lock = state.0.lock().unwrap();
-    
-    if client_lock.is_none() {
-        let mut client = DiscordIpcClient::new("1342502781444161567").map_err(|_| "Client Init Failed")?;
-        let _ = client.connect();
-        *client_lock = Some(client);
-    }
-
-    if let Some(client) = client_lock.as_mut() {
-        let payload = discord_rich_presence::activity::Activity::new()
-            .details(&details)
-            .state(&state_text)
-            .assets(discord_rich_presence::activity::Assets::new().large_image(&art_key));
-        
-        client.set_activity(payload).map_err(|_| "Update Failed")?;
-    }
-    Ok(())
-}
-
-// --- 🚛 TELEMETRY STREAMER ---
-fn start_telemetry_loop(handle: AppHandle) {
-    std::thread::spawn(move || {
-        let mut tick = 0;
-        loop {
-            let is_mock = {
-                let state = handle.state::<TelemetryState>();
-                let val = *state.is_mock.lock().unwrap();
-                val
-            };
-
-            if is_mock {
-                tick += 1;
-                let payload = serde_json::json!({
-                    "speed": 80.0 + (tick as f64 % 20.0),
-                    "gear": "12",
-                    "fuel": 450.0 - (tick as f64 % 50.0),
-                    "fuel_max": 600,
-                    "damage": 0.05,
-                    "blinkers": { "l": tick % 40 < 20, "r": false }
-                });
-                let _ = handle.emit("telemetry-update", payload);
-            } else {
-                if let Ok(mut shared_mem) = SharedMemory::connect() {
-                    let mut data = shared_mem.read(); 
-                    
-                    if let Ok(parsed) = data.to_json() {
-                        
-                        // 🛡️ THE FIX: Checking the exact keys defined by your C++ Plugin!
-                        let speed = parsed["truck"]["current"]["speed"].as_f64()
-                            .or_else(|| parsed["truck"]["speed"].as_f64())
-                            .unwrap_or(0.0) * 3.6; // Converting from m/s to km/h
-                            
-                        // Checking "displayed_gear" and "gearDashboard"
-                        let gear = parsed["truck"]["current"]["displayed_gear"].as_i64()
-                            .or_else(|| parsed["truck"]["current"]["gearDashboard"].as_i64())
-                            .or_else(|| parsed["truck"]["current"]["gear"].as_i64())
-                            .unwrap_or(0);
-                            
-                        let fuel = parsed["truck"]["current"]["fuel"].as_f64()
-                            .or_else(|| parsed["truck"]["fuel"].as_f64())
-                            .unwrap_or(0.0);
-                            
-                        let fuel_max = parsed["truck"]["constants"]["fuel_capacity"].as_f64()
-                            .or_else(|| parsed["truck"]["constants"]["fuelCapacity"].as_f64())
-                            .unwrap_or(600.0);
-
-                        let payload = serde_json::json!({
-                            "speed": speed,
-                            "gear": gear,
-                            "fuel": fuel,
-                            "fuel_max": fuel_max,
-                            "damage": parsed["truck"]["current"]["damage"]["chassis"].as_f64().unwrap_or(0.0),
-                            "blinkers": {
-                                "l": parsed["truck"]["current"]["lights"]["blinker_left_on"].as_bool().unwrap_or(false),
-                                "r": parsed["truck"]["current"]["lights"]["blinker_right_on"].as_bool().unwrap_or(false)
-                            },
-                            "raw": parsed 
-                        });
-                        let _ = handle.emit("telemetry-update", payload);
-                    }
-                }
-            }
-            std::thread::sleep(Duration::from_millis(16)); // ~60fps
-        }
-    });
-}
-
-// --- OVERLAY LOGIC ---
+// --- 🖥️ WINDOW LOGIC ---
 fn toggle_overlay_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("overlay") {
         if window.is_visible().unwrap_or(false) {
@@ -179,7 +31,7 @@ async fn hide_overlay(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// --- HOTKEY UPDATER ---
+// --- ⌨️ HOTKEY UPDATER ---
 #[tauri::command]
 fn update_hotkeys(
     app: AppHandle,
@@ -216,8 +68,6 @@ fn update_hotkeys(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(DiscordState(Arc::new(Mutex::new(None))))
-        .manage(TelemetryState { is_mock: Arc::new(Mutex::new(false)) })
         .plugin(tauri_plugin_updater::Builder::new().build()) 
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--silent"])))
@@ -227,12 +77,7 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            if let Some(overlay_window) = handle.get_webview_window("overlay") {
-                let _ = overlay_window.hide();
-            }
-
-            start_telemetry_loop(handle.clone());
-
+            // 🔍 GAME DETECTION LOOP: Manages Overlay vs Staff Panel
             std::thread::spawn(move || {
                 let mut sys = System::new_all();
                 let games = ["eurotrucks2.exe", "amtrucks.exe", "eurotrucks2", "amtrucks"];
@@ -260,6 +105,7 @@ pub fn run() {
                 }
             });
 
+            // 🖱️ TRAY SETUP
             let show_i = MenuItem::with_id(app, "show", "Open SimNation", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit Radio", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
@@ -290,10 +136,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             update_hotkeys, 
-            hide_overlay, 
-            install_telemetry_plugin, 
-            update_discord, 
-            toggle_telemetry_mock
+            hide_overlay
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

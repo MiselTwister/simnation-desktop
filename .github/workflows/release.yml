@@ -1,4 +1,4 @@
-name: Build SimNation Installer
+name: Build SimNation Hub Installer
 
 on:
   workflow_dispatch: # Manual trigger via the "Run Workflow" button
@@ -16,22 +16,26 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20 # ⬅️ Changed to Stable LTS so the action doesn't crash
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable # ⬅️ Ensures the build server has the right Rust tools
 
       - name: Install NPM dependencies
         run: npm install
+        working-directory: ./telemetry-hub # ⬅️ Tells GitHub to look in your new project folder
 
       - name: Build Tauri App & Create Installer
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 🔐 NEW: These connect your GitHub Secrets to the build process
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          projectPath: "./telemetry-hub" # ⬅️ Tells Tauri exactly where to build from
           tagName: v__VERSION__ 
-          releaseName: "SimNation Radio v__VERSION__"
-          # 📝 This is the text users see in the update popup!
-          releaseBody: "A new version of SimNation Radio is available! Optimization fixes and Game Detector updates included. Keep on truckin'!"
+          releaseName: "SimNation Hub v__VERSION__"
+          # 📝 The text users see in the update popup
+          releaseBody: "The all-new SimNation Hub! Includes the Frameless Radio Panel, Smart Game Overlay, and built-in SCS Telemetry."
           releaseDraft: false
           prerelease: false

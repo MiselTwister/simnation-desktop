@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for SimNation Hub",
+  "windows": [
+    "main",
+    "radio_panel",
+    "radio_overlay"
+  ],
+  "remote": {
+    "urls": [
+      "https://simnationradio.com",
+      "https://simnationradio.com/*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "global-shortcut:default",
+    "autostart:default",
+    "notification:default",
+    "updater:default"
+  ]
+}

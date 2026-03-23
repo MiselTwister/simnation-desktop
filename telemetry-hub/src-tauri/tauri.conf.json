@@ -1,31 +1,44 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SimNation Radio",
-  "version": "0.2.2",
-  "identifier": "com.simnationradio.desktop",
+  "productName": "SimNation Hub",
+  "version": "1.0.0",
+  "identifier": "com.simnation.hub",
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "",
-    "devUrl": "http://localhost:8000",
-    "frontendDist": "https://simnationradio.com"
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
         "label": "main",
-        "title": "SimNation Staff Panel",
-        "width": 1280,
-        "height": 720,
-        "decorations": true, 
-        "transparent": false,
-        "visible": true,
-        "center": true,
-        "resizable": true
+        "title": "SimNation Telemetry HUD",
+        "width": 1400,
+        "height": 100,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
       },
       {
-        "label": "overlay",
+        "label": "radio_panel",
+        "title": "SimNation Radio",
+        "url": "https://simnationradio.com",
+        "width": 1280,
+        "height": 720,
+        "decorations": false,
+        "transparent": false,
+        "visible": true,
+        "center": true
+      },
+      {
+        "label": "radio_overlay",
         "title": "SNR Smart Overlay",
-        "url": "/overlay",
+        "url": "https://simnationradio.com/overlay",
         "width": 600,
         "height": 450,
         "decorations": false,
@@ -33,10 +46,7 @@
         "alwaysOnTop": true,
         "visible": false,
         "skipTaskbar": true,
-        "shadow": false,
-        "focus": false,
-        "resizable": true,
-        "fullscreen": false
+        "shadow": false
       }
     ],
     "security": {
@@ -54,7 +64,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": true,
+    "resources": [
+      "resources/scs-telemetry.dll"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
