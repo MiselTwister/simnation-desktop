@@ -4,13 +4,6 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const truck = ref({ speed: 0, limit: 0, gear: 0, fuel: 0, temp: 0, damage: 0 });
-const appWindow = getCurrentWindow();
-
-// --- 🎯 MANUAL DRAG LOGIC ---
-const startMove = async (e) => {
-  e.preventDefault();
-  await appWindow.startDragging();
-};
 
 // --- 🧠 LOGIC ---
 const isSpeeding = computed(() => truck.value.limit > 0 && truck.value.speed > truck.value.limit + 2);
@@ -27,14 +20,15 @@ onMounted(async () => {
     truck.value = event.payload; 
   });
   
-  // Ensures mouse events are ignored on transparent areas (Click-through)
+  // Explicitly tell Tauri to accept clicks on this transparent window
+  const appWindow = getCurrentWindow();
   await appWindow.setIgnoreCursorEvents(false);
 });
 </script>
 
 <template>
-  <div class="hud-container">
-    <div class="drag-handle" @mousedown="startMove">✥</div>
+  <div class="hud-container" data-tauri-drag-region>
+    <div class="drag-handle" data-tauri-drag-region>✥</div>
 
     <div class="ribbon-content">
       <div class="group-left">
@@ -93,7 +87,6 @@ body { margin: 0; overflow: hidden; }
   height: 100px;
   background: linear-gradient(to bottom, rgba(10, 15, 25, 1) 0%, rgba(10, 15, 25, 0) 100%);
   border-top: 4px solid #FF5722;
-  /* Visual Polish for fixed-width bars */
   border-bottom-left-radius: 20px;
   border-bottom-right-radius: 20px;
   display: flex;
@@ -102,23 +95,31 @@ body { margin: 0; overflow: hidden; }
   color: white;
   font-family: 'Inter', sans-serif;
   position: relative;
-  pointer-events: none;
+  
+  /* 🚨 THE NUCLEAR FIX: Forces Windows to treat this entire div as a title bar */
+  pointer-events: auto !important;
+  -webkit-app-region: drag; 
 }
-
-.drag-handle, .ribbon-content { pointer-events: auto; }
 
 .drag-handle {
   position: absolute;
   left: 15px;
   top: 15px;
-  cursor: move;
   color: #FF5722;
   opacity: 0.3;
   font-size: 24px;
+  -webkit-app-region: drag;
 }
-.drag-handle:hover { opacity: 1; }
+.hud-container:hover .drag-handle { opacity: 1; }
 
-.ribbon-content { display: flex; width: 100%; justify-content: space-between; align-items: center; }
+.ribbon-content { 
+  display: flex; 
+  width: 100%; 
+  justify-content: space-between; 
+  align-items: center; 
+  /* 🚨 Prevents the text from interrupting your mouse drag */
+  -webkit-app-region: no-drag; 
+}
 
 /* Dynamic spacing for 1400px width centering */
 .group-left { display: flex; gap: 40px; align-items: center; min-width: 280px; }
