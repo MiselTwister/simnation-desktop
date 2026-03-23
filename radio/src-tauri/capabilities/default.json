@@ -21,6 +21,7 @@
     "core:window:allow-set-always-on-top",
     "core:event:allow-listen",
     "core:event:allow-emit",
-    "core:webview:allow-javascript-eval"
+    "core:webview:default",
+    "core:app:default"
   ]
 }

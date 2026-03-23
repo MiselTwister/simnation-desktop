@@ -28,7 +28,7 @@
     "core:window:allow-close",
     "core:event:allow-listen",
     "core:event:allow-emit",
-    "core:app:allow-quit",
-    "core:webview:allow-javascript-eval"
+    "core:webview:default",
+    "core:app:default"
   ]
 }
