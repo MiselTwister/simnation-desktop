@@ -15,7 +15,7 @@ use winapi::um::memoryapi::{OpenFileMappingW, MapViewOfFile, FILE_MAP_READ, Unma
 use winapi::um::handleapi::CloseHandle;
 use std::os::windows::ffi::OsStrExt;
 
-// 🎯 ZONE OFFSETS (Aligned with your C++ scsTelemetryMap_t struct)
+// 🎯 ZONE OFFSETS (Aligned with scsTelemetryMap_t struct)
 const SPEED_OFFSET: usize = 704;        // truck.speed
 const LIMIT_OFFSET: usize = 712;        // truck.navigation.speed.limit
 const GEAR_OFFSET: usize = 508;         // truck.displayed.gear
@@ -89,11 +89,10 @@ fn update_hotkeys(
 // --- 🚛 RAW TELEMETRY LOOP ---
 fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
     std::thread::spawn(move || {
-        // 🚨 FIX: Standardized escape for Local\\SCSTelemetry
-        let name: Vec<u16> = std::ffi::OsStr::new("Local\\SCSTelemetry")
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
+        // 🚨 PRO FIX: Proper UTF-16 encoding for Windows LPCWSTR
+        let name_str = "Local\\SCSTelemetry";
+        let mut name: Vec<u16> = name_str.encode_utf16().collect();
+        name.push(0); // Null terminator
 
         let mut mock_counter: f32 = 0.0;
 
@@ -120,7 +119,7 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                     if !h_map_file.is_null() {
                         let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
                         if !p_buf.is_null() {
-                            // 🚨 PRO CHECK: Verify if the SDK is actually active
+                            // 🚨 PRO CHECK: First byte of struct is sdkActive (bool)
                             let sdk_active = *(p_buf as *const bool);
                             
                             if sdk_active {

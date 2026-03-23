@@ -16,45 +16,27 @@ const gearDisplay = computed(() => {
 });
 
 onMounted(async () => {
-  const appWindow = getCurrentWindow();
-
   // 🚀 Start listening for the data loop from Rust lib.rs
   try {
     await listen("telemetry-update", (event) => {
-      // Direct assignment for 60fps performance
       truck.value = event.payload;
     });
 
-    // 🛡️ CLICK-THROUGH BY DEFAULT: This allows mouse clicks to pass to the game
-    await appWindow.setIgnoreCursorEvents(true);
+    /** * 🚨 PRO FIX: 
+     * We REMOVE setIgnoreCursorEvents(true) from here.
+     * We will handle click-through via CSS 'pointer-events: none'.
+     * This is much more reliable for dragging.
+     */
   } catch (err) {
     console.error("HUD Bridge Error:", err);
   }
 });
-
-/**
- * ✥ DRAG LOGIC:
- * To move the window, we must stop "ignoring" cursor events.
- * This function is triggered by @mouseenter/mouseleave on the drag handle area.
- */
-const enableInteraction = async (enabled) => {
-  try {
-    const appWindow = getCurrentWindow();
-    await appWindow.setIgnoreCursorEvents(!enabled);
-  } catch (e) {
-    // Fail silently during rapid mouse movements
-  }
-};
 </script>
 
 <template>
   <div class="hud-container">
-    <div 
-      class="drag-handle" 
-      data-tauri-drag-region
-      @mouseenter="enableInteraction(true)" 
-      @mouseleave="enableInteraction(false)"
-    >✥</div>
+    
+    <div class="drag-handle" data-tauri-drag-region>✥</div>
 
     <div class="ribbon-content">
       <div class="group-left">
@@ -105,7 +87,6 @@ const enableInteraction = async (enabled) => {
 </template>
 
 <style>
-/* 🎨 THE PRO OVERLAY SETUP */
 :root { background-color: transparent !important; user-select: none; }
 body { margin: 0; overflow: hidden; background-color: transparent !important; }
 
@@ -123,8 +104,10 @@ body { margin: 0; overflow: hidden; background-color: transparent !important; }
   font-family: 'Inter', sans-serif;
   position: relative;
   
-  /* 🚨 DISABLE clicks on the background bar so they go to the game */
-  pointer-events: none;
+  /* 🚨 CLICK-THROUGH MAGIC:
+     This makes the entire bar transparent to clicks so you can click the game.
+  */
+  pointer-events: none !important;
 }
 
 .drag-handle {
@@ -135,46 +118,51 @@ body { margin: 0; overflow: hidden; background-color: transparent !important; }
   opacity: 0.3;
   font-size: 24px;
   
-  /* 🚨 ENABLE clicks only on the handle icon */
+  /* 🚨 INTERACTIVE HANDLE:
+     This RE-ENABLES pointer events for the icon only.
+     Windows will see this element as 'Solid' while the rest is 'Hollow'.
+  */
   pointer-events: auto !important;
-  -webkit-app-region: drag;
+  -webkit-app-region: drag !important;
   cursor: grab;
-  z-index: 100;
+  z-index: 9999;
 }
-.drag-handle:active { cursor: grabbing; }
-.drag-handle:hover { opacity: 1; }
+
+.drag-handle:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
 
 .ribbon-content { 
   display: flex; 
   width: 100%; 
   justify-content: space-between; 
   align-items: center; 
-  /* Visual only, no mouse interaction */
+  /* Content is visual only, mouse passes through */
   pointer-events: none; 
 }
 
-/* --- Layout Elements --- */
+/* --- Keep all your layout styles below exactly as they were --- */
 .group-left { display: flex; gap: 40px; align-items: center; min-width: 280px; }
 .group-right-spacer { min-width: 280px; }
 .group-center-integrated { display: flex; gap: 70px; align-items: center; justify-content: center; flex-grow: 1; }
 .stat-group { display: flex; flex-direction: column; }
 .label { font-size: 10px; font-weight: 900; color: #999; letter-spacing: 3px; margin-bottom: 2px; }
-
 .value.lg { font-size: 52px; font-weight: 950; line-height: 0.9; }
 .value.md { font-size: 28px; font-weight: 900; margin-top: 4px; }
 .accent { color: #FF5722; }
 .warn { color: #ff3d00; text-shadow: 0 0 15px rgba(255, 61, 0, 0.6); }
-
 .fuel-integrated { margin-top: 8px; }
 .fuel-track-lg { width: 120px; height: 12px; background: rgba(255, 255, 255, 0.15); border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,0.2); }
 .fuel-fill { height: 100%; background: linear-gradient(90deg, #FF5722, #ff8a65); transition: width 0.5s ease-out; }
-
 .branding-integrated { opacity: 0.6; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 30px; }
 .status-text-lg { font-size: 14px; font-weight: 900; color: #FF5722; margin-top: 6px; letter-spacing: 1px; }
-
 .value-row { display: flex; align-items: center; gap: 15px; }
 .limit-sign-lg { width: 42px; height: 42px; background: white; border: 4px solid #cc0000; border-radius: 50%; color: black; font-weight: 950; font-size: 18px; display: flex; justify-content: center; align-items: center; }
-
 .speeding { color: #ff3d00; text-shadow: 0 0 25px rgba(255, 61, 0, 1); animation: speed-pulse 0.8s infinite; }
 @keyframes speed-pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
 .low-fuel-blink { background: #ff0000 !important; animation: fuel-pulse 1s infinite; }
