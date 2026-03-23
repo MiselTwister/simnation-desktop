@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::time::Duration;
+use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
@@ -9,9 +10,15 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use sysinfo::System;
 
+// --- 🧠 APP STATE (Synced with Hub logic) ---
+struct AppState {
+    is_mock_active: bool,
+}
+
 // --- 🖥️ WINDOW LOGIC ---
 fn toggle_overlay_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("overlay") {
+    // 🚨 UPDATED: Using "radio_overlay" to match your telemetry config
+    if let Some(window) = app.get_webview_window("radio_overlay") {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
@@ -25,10 +32,23 @@ fn toggle_overlay_window(app: &AppHandle) {
 
 #[tauri::command]
 async fn hide_overlay(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("overlay") {
+    if let Some(window) = app.get_webview_window("radio_overlay") {
         window.hide().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+// --- 🎮 TELEMETRY COMMANDS ---
+#[tauri::command]
+fn toggle_telemetry_mock(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> bool {
+    let mut s = state.lock().unwrap();
+    s.is_mock_active = !s.is_mock_active;
+    s.is_mock_active
+}
+
+#[tauri::command]
+fn install_telemetry_plugin() -> Result<String, String> {
+    Ok("SCS Telemetry is active via SimNation Hub.".to_string())
 }
 
 // --- ⌨️ HOTKEY UPDATER ---
@@ -65,19 +85,48 @@ fn update_hotkeys(
     Ok(())
 }
 
+// --- 🚀 MOCK DATA LOOP ---
+fn start_mock_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
+    std::thread::spawn(move || {
+        let mut counter: f32 = 0.0;
+        loop {
+            let is_mock = state.lock().unwrap().is_mock_active;
+            if is_mock {
+                counter += 0.1;
+                let mock_speed = (counter.sin() * 30.0) + 55.0;
+                let _ = handle.emit("telemetry-update", serde_json::json!({
+                    "speed": mock_speed,
+                    "limit": 80,
+                    "gear": 10,
+                    "fuel": 75,
+                    "temp": 85,
+                    "damage": 1
+                }));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let app_state = Arc::new(Mutex::new(AppState { is_mock_active: false }));
+
     tauri::Builder::default()
+        .manage(app_state.clone()) 
         .plugin(tauri_plugin_updater::Builder::new().build()) 
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--silent"])))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
+            
+            // Start the mock listener loop
+            start_mock_loop(handle.clone(), app_state.clone());
 
-            // 🔍 GAME DETECTION LOOP: Manages Overlay vs Staff Panel
+            // 🔍 GAME DETECTION LOOP
             std::thread::spawn(move || {
                 let mut sys = System::new_all();
                 let games = ["eurotrucks2.exe", "amtrucks.exe", "eurotrucks2", "amtrucks"];
@@ -91,13 +140,13 @@ pub fn run() {
                     });
 
                     if is_running && !was_running {
-                        if let Some(w) = handle.get_webview_window("overlay") {
+                        if let Some(w) = handle.get_webview_window("radio_overlay") {
                             let _ = w.show(); let _ = w.unminimize(); let _ = w.set_always_on_top(true);
                         }
                         if let Some(main) = handle.get_webview_window("main") { let _ = main.hide(); }
                         was_running = true;
                     } else if !is_running && was_running {
-                        if let Some(w) = handle.get_webview_window("overlay") { let _ = w.hide(); }
+                        if let Some(w) = handle.get_webview_window("radio_overlay") { let _ = w.hide(); }
                         if let Some(main) = handle.get_webview_window("main") { let _ = main.show(); let _ = main.unminimize(); let _ = main.set_focus(); }
                         was_running = false;
                     }
@@ -136,7 +185,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             update_hotkeys, 
-            hide_overlay
+            hide_overlay,
+            toggle_telemetry_mock,
+            install_telemetry_plugin
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

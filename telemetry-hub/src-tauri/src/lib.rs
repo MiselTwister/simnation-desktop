@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::time::Duration;
+use std::sync::{Arc, Mutex}; 
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
@@ -25,10 +26,17 @@ const FUEL_OFFSET: usize = ZONE_FOUR_OFFSET + 56;
 const DAMAGE_OFFSET: usize = ZONE_FOUR_OFFSET + 92; 
 const GEAR_OFFSET: usize = ZONE_THREE_OFFSET + 8; 
 
+// --- 🧠 APP STATE ---
+struct AppState {
+    is_mock_active: bool,
+}
+
 // --- 🎮 FRONTEND COMPATIBILITY COMMANDS ---
 #[tauri::command]
-fn toggle_telemetry_mock() -> bool {
-    false 
+fn toggle_telemetry_mock(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> bool {
+    let mut s = state.lock().unwrap();
+    s.is_mock_active = !s.is_mock_active;
+    s.is_mock_active
 }
 
 #[tauri::command]
@@ -68,7 +76,12 @@ fn update_hotkeys(
             if event.state == ShortcutState::Pressed {
                 if let Some(w) = handle.get_webview_window("radio_overlay") {
                     let is_vis = w.is_visible().unwrap_or(false);
-                    if is_vis { let _ = w.hide(); } else { let _ = w.show(); let _ = w.set_focus(); }
+                    if is_vis { let _ = w.hide(); } else { 
+                        let _ = w.show(); 
+                        let _ = w.unminimize();
+                        let _ = w.set_always_on_top(true);
+                        let _ = w.set_focus(); 
+                    }
                 }
             }
         });
@@ -77,56 +90,82 @@ fn update_hotkeys(
 }
 
 // --- 🚛 RAW TELEMETRY LOOP ---
-fn start_telemetry_loop(handle: AppHandle) {
+fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
     std::thread::spawn(move || {
         let name: Vec<u16> = std::ffi::OsStr::new("Local\\SCSTelemetry")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
 
+        let mut mock_counter: f32 = 0.0;
+
         loop {
-            unsafe {
-                let h_map_file = OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr());
-                if !h_map_file.is_null() {
-                    let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
-                    if !p_buf.is_null() {
-                        let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
-                        let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
-                        let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
-                        let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
-                        let temp = *(p_buf.add(WATER_TEMP_OFFSET) as *const f32);
-                        let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
+            let is_mock = {
+                let s = state.lock().unwrap();
+                s.is_mock_active
+            };
 
-                        let _ = handle.emit("telemetry-update", serde_json::json!({
-                            "speed": (speed_ms * 3.6).abs(),
-                            "limit": (limit_ms * 3.6).abs(),
-                            "gear": gear,
-                            "fuel": fuel, 
-                            "temp": temp,
-                            "damage": (damage * 100.0).round()
-                        }));
+            if is_mock {
+                // 🚀 GENERATE MOCK DATA
+                mock_counter += 0.1;
+                let mock_speed = (mock_counter.sin() * 40.0) + 60.0; 
+                
+                let _ = handle.emit("telemetry-update", serde_json::json!({
+                    "speed": mock_speed,
+                    "limit": 80,
+                    "gear": 12,
+                    "fuel": 85, 
+                    "temp": 90,
+                    "damage": 2
+                }));
+            } else {
+                // 🚛 READ RAW MEMORY FROM GAME
+                unsafe {
+                    let h_map_file = OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr());
+                    if !h_map_file.is_null() {
+                        let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
+                        if !p_buf.is_null() {
+                            let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
+                            let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
+                            let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
+                            let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
+                            let temp = *(p_buf.add(WATER_TEMP_OFFSET) as *const f32);
+                            let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
 
-                        UnmapViewOfFile(p_buf);
+                            let _ = handle.emit("telemetry-update", serde_json::json!({
+                                "speed": (speed_ms * 3.6).abs(),
+                                "limit": (limit_ms * 3.6).abs(),
+                                "gear": gear,
+                                "fuel": fuel, 
+                                "temp": temp,
+                                "damage": (damage * 100.0).round()
+                            }));
+
+                            UnmapViewOfFile(p_buf);
+                        }
+                        CloseHandle(h_map_file);
                     }
-                    CloseHandle(h_map_file);
                 }
             }
-            std::thread::sleep(Duration::from_millis(16));
+            std::thread::sleep(Duration::from_millis(16)); 
         }
     });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let app_state = Arc::new(Mutex::new(AppState { is_mock_active: false }));
+
     tauri::Builder::default()
+        .manage(app_state.clone()) 
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--silent"])))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
 
-            start_telemetry_loop(handle.clone());
+            start_telemetry_loop(handle.clone(), app_state.clone());
 
             // 🔍 Game Detection Loop
             std::thread::spawn(move || {
@@ -143,12 +182,14 @@ pub fn run() {
                     });
 
                     if is_running && !was_running {
-                        // Game Started! Show the HUD and Overlay
                         if let Some(w) = handle.get_webview_window("main") { let _ = w.show(); }
-                        if let Some(w) = handle.get_webview_window("radio_overlay") { let _ = w.show(); }
+                        if let Some(w) = handle.get_webview_window("radio_overlay") { 
+                            let _ = w.show(); 
+                            let _ = w.unminimize();
+                            let _ = w.set_always_on_top(true);
+                        }
                         was_running = true;
                     } else if !is_running && was_running {
-                        // Game Stopped! Hide the HUD and Overlay
                         if let Some(w) = handle.get_webview_window("main") { let _ = w.hide(); }
                         if let Some(w) = handle.get_webview_window("radio_overlay") { let _ = w.hide(); }
                         was_running = false;
@@ -156,32 +197,6 @@ pub fn run() {
                     std::thread::sleep(Duration::from_secs(5));
                 }
             });
-
-            // 🖱️ Tray Menu
-            let show_h = MenuItem::with_id(app, "show_hub", "Show HUD", true, None::<&str>)?;
-            let show_r = MenuItem::with_id(app, "show_radio", "Radio Staff Panel", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit SimNation", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_h, &show_r, &quit_i])?;
-
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .on_menu_event(move |app_handle, event| match event.id.as_ref() {
-                    "show_hub" => { if let Some(w) = app_handle.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); } }
-                    "show_radio" => { if let Some(w) = app_handle.get_webview_window("radio_panel") { let _ = w.show(); let _ = w.set_focus(); } }
-                    "quit" => { std::process::exit(0); }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| match event {
-                    TrayIconEvent::Click { button: MouseButton::Left, .. } => {
-                        if let Some(w) = tray.app_handle().get_webview_window("radio_panel") { 
-                            let _ = w.show(); 
-                            let _ = w.set_focus(); 
-                        }
-                    }
-                    _ => {}
-                })
-                .build(app)?;
 
             Ok(())
         })
