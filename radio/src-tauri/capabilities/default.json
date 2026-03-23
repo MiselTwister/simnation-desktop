@@ -1,10 +1,12 @@
 {
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
+  "$schema": "../../gen/schemas/desktop-schema.json",
+  "identifier": "radio-default",
   "description": "Capability for the main and overlay windows",
   "windows": [
     "main",
-    "overlay"
+    "radio_panel",
+    "radio_overlay",
+    "radio_overlay_window"
   ],
   "permissions": [
     "core:default",
@@ -14,6 +16,11 @@
     "core:window:allow-set-focus",
     "core:window:allow-hide",
     "core:window:allow-show",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-set-always-on-top",
+    "core:event:allow-listen",
+    "core:event:allow-emit",
+    "core:webview:allow-javascript-eval"
   ]
 }

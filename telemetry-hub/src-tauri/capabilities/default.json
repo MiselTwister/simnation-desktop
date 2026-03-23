@@ -5,7 +5,8 @@
   "windows": [
     "main",
     "radio_panel",
-    "radio_overlay"
+    "radio_overlay",
+    "radio_overlay_window"
   ],
   "remote": {
     "urls": [
@@ -13,7 +14,7 @@
       "https://simnationradio.com/*"
     ]
   },
-"permissions": [
+  "permissions": [
     "core:default",
     "global-shortcut:default",
     "autostart:default",
@@ -22,7 +23,12 @@
     "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-start-dragging",
     "core:window:allow-set-always-on-top",
+    "core:window:allow-set-focus",
+    "core:window:allow-minimize",
+    "core:window:allow-close",
     "core:event:allow-listen",
-    "core:event:allow-emit"
+    "core:event:allow-emit",
+    "core:app:allow-quit",
+    "core:webview:allow-javascript-eval"
   ]
 }
