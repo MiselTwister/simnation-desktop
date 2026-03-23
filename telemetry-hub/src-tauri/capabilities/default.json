@@ -13,11 +13,16 @@
       "https://simnationradio.com/*"
     ]
   },
-  "permissions": [
+"permissions": [
     "core:default",
     "global-shortcut:default",
     "autostart:default",
     "notification:default",
-    "updater:default"
+    "updater:default",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-always-on-top",
+    "core:event:allow-listen",
+    "core:event:allow-emit"
   ]
 }
