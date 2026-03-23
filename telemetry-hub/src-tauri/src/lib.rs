@@ -15,16 +15,13 @@ use winapi::um::memoryapi::{OpenFileMappingW, MapViewOfFile, FILE_MAP_READ, Unma
 use winapi::um::handleapi::CloseHandle;
 use std::os::windows::ffi::OsStrExt;
 
-// 🎯 ZONE OFFSETS (SCS Telemetry Blueprint)
-const ZONE_FOUR_OFFSET: usize = 700; 
-const ZONE_THREE_OFFSET: usize = 500; 
-
-const SPEED_OFFSET: usize = ZONE_FOUR_OFFSET + 4; 
-const LIMIT_OFFSET: usize = ZONE_FOUR_OFFSET + 12; 
-const WATER_TEMP_OFFSET: usize = ZONE_FOUR_OFFSET + 44; 
-const FUEL_OFFSET: usize = ZONE_FOUR_OFFSET + 56; 
-const DAMAGE_OFFSET: usize = ZONE_FOUR_OFFSET + 92; 
-const GEAR_OFFSET: usize = ZONE_THREE_OFFSET + 8; 
+// 🎯 ZONE OFFSETS (Aligned with your C++ scsTelemetryMap_t struct)
+const SPEED_OFFSET: usize = 704;        // truck.speed
+const LIMIT_OFFSET: usize = 712;        // truck.navigation.speed.limit
+const GEAR_OFFSET: usize = 508;         // truck.displayed.gear
+const WATER_TEMP_OFFSET: usize = 744;   // truck.water.temperature
+const FUEL_OFFSET: usize = 756;         // truck.fuel.amount
+const DAMAGE_OFFSET: usize = 792;       // truck.wear.engine
 
 // --- 🧠 APP STATE ---
 struct AppState {
@@ -92,6 +89,7 @@ fn update_hotkeys(
 // --- 🚛 RAW TELEMETRY LOOP ---
 fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
     std::thread::spawn(move || {
+        // 🚨 FIX: Standardized escape for Local\\SCSTelemetry
         let name: Vec<u16> = std::ffi::OsStr::new("Local\\SCSTelemetry")
             .encode_wide()
             .chain(std::iter::once(0))
@@ -106,10 +104,8 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
             };
 
             if is_mock {
-                // 🚀 GENERATE MOCK DATA
                 mock_counter += 0.1;
                 let mock_speed = (mock_counter.sin() * 40.0) + 60.0; 
-                
                 let _ = handle.emit("telemetry-update", serde_json::json!({
                     "speed": mock_speed,
                     "limit": 80,
@@ -119,28 +115,31 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                     "damage": 2
                 }));
             } else {
-                // 🚛 READ RAW MEMORY FROM GAME
                 unsafe {
                     let h_map_file = OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr());
                     if !h_map_file.is_null() {
                         let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
                         if !p_buf.is_null() {
-                            let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
-                            let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
-                            let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
-                            let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
-                            let temp = *(p_buf.add(WATER_TEMP_OFFSET) as *const f32);
-                            let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
+                            // 🚨 PRO CHECK: Verify if the SDK is actually active
+                            let sdk_active = *(p_buf as *const bool);
+                            
+                            if sdk_active {
+                                let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
+                                let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
+                                let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
+                                let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
+                                let temp = *(p_buf.add(WATER_TEMP_OFFSET) as *const f32);
+                                let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
 
-                            let _ = handle.emit("telemetry-update", serde_json::json!({
-                                "speed": (speed_ms * 3.6).abs(),
-                                "limit": (limit_ms * 3.6).abs(),
-                                "gear": gear,
-                                "fuel": fuel, 
-                                "temp": temp,
-                                "damage": (damage * 100.0).round()
-                            }));
-
+                                let _ = handle.emit("telemetry-update", serde_json::json!({
+                                    "speed": (speed_ms * 3.6).abs(),
+                                    "limit": (limit_ms * 3.6).abs(),
+                                    "gear": gear,
+                                    "fuel": fuel, 
+                                    "temp": temp,
+                                    "damage": (damage * 100.0).round()
+                                }));
+                            }
                             UnmapViewOfFile(p_buf);
                         }
                         CloseHandle(h_map_file);
@@ -167,7 +166,6 @@ pub fn run() {
 
             start_telemetry_loop(handle.clone(), app_state.clone());
 
-            // 🔍 Game Detection Loop
             std::thread::spawn(move || {
                 let mut sys = System::new_all();
                 let games = ["eurotrucks2", "amtrucks"];
@@ -175,7 +173,6 @@ pub fn run() {
                 
                 loop {
                     sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
-                    
                     let is_running = sys.processes().values().any(|p| {
                         let n = p.name().to_string_lossy().to_lowercase();
                         games.iter().any(|&g| n.contains(g))
