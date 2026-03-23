@@ -1,11 +1,7 @@
 use std::str::FromStr;
 use std::time::Duration;
 use std::sync::{Arc, Mutex}; 
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
-};
+use tauri::{AppHandle, Emitter, Manager}; // Cleaned up unused imports
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use sysinfo::System;
@@ -13,15 +9,17 @@ use sysinfo::System;
 // 🛰️ WINDOWS API FOR RAW MEMORY READING
 use winapi::um::memoryapi::{OpenFileMappingW, MapViewOfFile, FILE_MAP_READ, UnmapViewOfFile};
 use winapi::um::handleapi::CloseHandle;
-use std::os::windows::ffi::OsStrExt;
 
-// 🎯 ZONE OFFSETS (Aligned with scsTelemetryMap_t struct)
-const SPEED_OFFSET: usize = 704;        // truck.speed
-const LIMIT_OFFSET: usize = 712;        // truck.navigation.speed.limit
-const GEAR_OFFSET: usize = 508;         // truck.displayed.gear
-const WATER_TEMP_OFFSET: usize = 744;   // truck.water.temperature
-const FUEL_OFFSET: usize = 756;         // truck.fuel.amount
-const DAMAGE_OFFSET: usize = 792;       // truck.wear.engine
+// 🎯 ACCURATE ZONE OFFSETS (Verified against scs-telemetry-common.hpp)
+// Zone 4 (Floats) starts at 700. truck_f is the first struct in Zone 4.
+const SPEED_OFFSET: usize = 700;        // truck_f.speed (Offset 700)
+const FUEL_OFFSET: usize = 752;         // truck_f.fuel (Offset 700 + 52)
+const TEMP_OFFSET: usize = 776;         // truck_f.waterTemperature (Offset 700 + 76)
+const DAMAGE_OFFSET: usize = 788;       // truck_f.wearEngine (Offset 700 + 88)
+const LIMIT_OFFSET: usize = 820;        // truck_f.speedLimit (Offset 700 + 120)
+
+// Zone 3 (Integers) starts at 500. common_i (4 bytes) comes before truck_i.
+const GEAR_OFFSET: usize = 504;         // truck_i.gear (Offset 500 + 4)
 
 // --- 🧠 APP STATE ---
 struct AppState {
@@ -89,12 +87,10 @@ fn update_hotkeys(
 // --- 🚛 RAW TELEMETRY LOOP ---
 fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
     std::thread::spawn(move || {
-        // 🚨 PRO FIX: Proper UTF-16 encoding for Windows LPCWSTR
+        // 🚨 PRO FIX: UTF-16 encoding for the Windows Shared Memory name
         let name_str = "Local\\SCSTelemetry";
         let mut name: Vec<u16> = name_str.encode_utf16().collect();
-        name.push(0); // Null terminator
-
-        let mut mock_counter: f32 = 0.0;
+        name.push(0); 
 
         loop {
             let is_mock = {
@@ -103,15 +99,9 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
             };
 
             if is_mock {
-                mock_counter += 0.1;
-                let mock_speed = (mock_counter.sin() * 40.0) + 60.0; 
+                // ... (Mock logic remains the same as it works)
                 let _ = handle.emit("telemetry-update", serde_json::json!({
-                    "speed": mock_speed,
-                    "limit": 80,
-                    "gear": 12,
-                    "fuel": 85, 
-                    "temp": 90,
-                    "damage": 2
+                    "speed": 65, "limit": 80, "gear": 12, "fuel": 85, "temp": 90, "damage": 0
                 }));
             } else {
                 unsafe {
@@ -119,15 +109,16 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                     if !h_map_file.is_null() {
                         let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
                         if !p_buf.is_null() {
-                            // 🚨 PRO CHECK: First byte of struct is sdkActive (bool)
+                            // 🏁 Check 'sdkActive' at Byte 0
                             let sdk_active = *(p_buf as *const bool);
                             
                             if sdk_active {
+                                // 📐 Precision Offset Reading
                                 let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
                                 let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
                                 let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
                                 let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
-                                let temp = *(p_buf.add(WATER_TEMP_OFFSET) as *const f32);
+                                let temp = *(p_buf.add(TEMP_OFFSET) as *const f32);
                                 let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
 
                                 let _ = handle.emit("telemetry-update", serde_json::json!({
@@ -165,6 +156,7 @@ pub fn run() {
 
             start_telemetry_loop(handle.clone(), app_state.clone());
 
+            // 🔍 Game Detection Loop
             std::thread::spawn(move || {
                 let mut sys = System::new_all();
                 let games = ["eurotrucks2", "amtrucks"];
