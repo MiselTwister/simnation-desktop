@@ -13,7 +13,7 @@ use winapi::um::memoryapi::{OpenFileMappingW, MapViewOfFile, FILE_MAP_READ, Unma
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::errhandlingapi::GetLastError; 
 
-// 🎯 ZONE OFFSETS (Verified against scs-telemetry-common.hpp)
+// 🎯 ZONE OFFSETS
 const SPEED_OFFSET: usize = 700;        
 const FUEL_OFFSET: usize = 752;         
 const TEMP_OFFSET: usize = 776;         
@@ -25,16 +25,21 @@ struct AppState {
     is_mock_active: bool,
 }
 
-// 📝 PRO LOGGER FUNCTION
+// 📝 PRO LOGGER FUNCTION - Writes to Documents folder
 fn log_to_file(message: &str) {
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("telemetry_debug.log") 
-    {
-        // 🚨 FIX: Using full path for chrono
-        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        let _ = writeln!(file, "[{}] {}", timestamp, message);
+    // We use a safe path that Windows always allows: Your Documents Folder
+    if let Ok(mut log_path) = std::env::var("USERPROFILE").map(std::path::PathBuf::from) {
+        log_path.push("Documents");
+        log_path.push("SimNation_Debug.log");
+
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path) 
+        {
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            let _ = writeln!(file, "[{}] {}", timestamp, message);
+        }
     }
 }
 
@@ -128,7 +133,6 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                                     last_connected_state = true;
                                 }
 
-                                // 🚨 Variables synced with constant names
                                 let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
                                 let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
                                 let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
@@ -145,7 +149,7 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                                     "damage": (damage * 100.0).round()
                                 }));
                             } else {
-                                if error_count % 100 == 0 { // Log every ~1.6 seconds to avoid massive files
+                                if error_count % 300 == 0 { // Log every ~5 seconds
                                     log_to_file("WAITING: Memory found but SDK Active is false.");
                                 }
                                 error_count += 1;
@@ -176,7 +180,6 @@ pub fn run() {
             let handle = app.handle().clone();
             start_telemetry_loop(handle.clone(), app_state.clone());
             
-            // 🔍 Game Detection Loop
             std::thread::spawn(move || {
                 let mut sys = System::new_all();
                 let games = ["eurotrucks2", "amtrucks"];
