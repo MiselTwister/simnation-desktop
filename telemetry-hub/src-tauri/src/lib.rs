@@ -13,13 +13,13 @@ use winapi::um::memoryapi::{OpenFileMappingW, MapViewOfFile, FILE_MAP_READ, Unma
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::errhandlingapi::GetLastError; 
 
-// 🎯 ZONE OFFSETS (Aligned with scs-telemetry-common.hpp)
-const SPEED_OFFSET: usize = 700;        
-const FUEL_OFFSET: usize = 752;         
-const TEMP_OFFSET: usize = 776;         
-const DAMAGE_OFFSET: usize = 788;       
-const LIMIT_OFFSET: usize = 820;        
-const GEAR_OFFSET: usize = 504;         
+// 🎯 ZONE OFFSETS (Perfectly Aligned to 64-bit scsTelemetryMap_t)
+const SPEED_OFFSET: usize = 948;        // truck_f.speed
+const FUEL_OFFSET: usize = 1000;        // truck_f.fuel
+const TEMP_OFFSET: usize = 1024;        // truck_f.waterTemperature
+const LIMIT_OFFSET: usize = 1068;       // truck_f.speedLimit
+const DAMAGE_OFFSET: usize = 1468;      // job_f.cargoDamage
+const GEAR_OFFSET: usize = 504;         // truck_i.gear (Unchanged)
 
 struct AppState {
     is_mock_active: bool,
