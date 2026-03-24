@@ -110,62 +110,81 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                 let _ = handle.emit("telemetry-update", serde_json::json!({
                     "speed": 65, "limit": 80, "gear": 12, "fuel": 85, "temp": 90, "damage": 0
                 }));
-            } else {
-                unsafe {
-                    // 1. Attempt to open mapping
-                    let h_map_file = OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr());
-                    
-                    if h_map_file.is_null() {
-                        if last_connected_state {
-                            let err = GetLastError();
-                            log_to_file(&format!("LOST CONNECTION: Mapping vanished (WinErr {}). Waiting for game...", err));
-                            last_connected_state = false;
-                        }
-                        // Retry every 1s when game is not found
-                        std::thread::sleep(Duration::from_millis(1000));
-                        continue; 
-                    }
-
-                    // 2. Map view
-                    let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
-                    if !p_buf.is_null() {
-                        let sdk_active = *(p_buf as *const bool);
-                        
-                        if sdk_active {
-                            if !last_connected_state {
-                                log_to_file("SUCCESS: Connected to Shared Memory and SDK is ACTIVE.");
-                                last_connected_state = true;
-                                sdk_error_logged = false;
-                            }
-
-                            let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
-                            let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
-                            let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
-                            let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
-                            let temp = *(p_buf.add(TEMP_OFFSET) as *const f32);
-                            let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
-
-                            let _ = handle.emit("telemetry-update", serde_json::json!({
-                                "speed": (speed_ms * 3.6).abs(),
-                                "limit": (limit_ms * 3.6).abs(),
-                                "gear": gear,
-                                "fuel": fuel, 
-                                "temp": temp,
-                                "damage": (damage * 100.0).round()
-                            }));
-                        } else {
-                            if !sdk_error_logged {
-                                log_to_file("WAITING: Memory block found, but SDK is not sending data yet.");
-                                sdk_error_logged = true;
-                            }
-                            last_connected_state = false;
-                        }
-                        UnmapViewOfFile(p_buf);
-                    }
-                    CloseHandle(h_map_file);
-                }
+                std::thread::sleep(Duration::from_millis(16));
+                continue;
             }
-            std::thread::sleep(Duration::from_millis(16)); 
+
+            unsafe {
+                // 1. OPEN HANDLE ONCE
+                let h_map_file = OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr());
+                
+                if h_map_file.is_null() {
+                    if last_connected_state {
+                        let err = GetLastError();
+                        log_to_file(&format!("LOST CONNECTION: Mapping vanished (WinErr {}). Waiting for game...", err));
+                        last_connected_state = false;
+                    }
+                    std::thread::sleep(Duration::from_millis(1000));
+                    continue; 
+                }
+
+                // 2. MAP VIEW ONCE
+                let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
+                if p_buf.is_null() {
+                    CloseHandle(h_map_file);
+                    std::thread::sleep(Duration::from_millis(1000));
+                    continue;
+                }
+
+                if !last_connected_state {
+                    log_to_file("SUCCESS: Connected to Shared Memory and SDK is ACTIVE.");
+                    last_connected_state = true;
+                    sdk_error_logged = false;
+                }
+
+                // 3. INNER LOOP: Read continuously without closing handles
+                loop {
+                    // Break if mock is turned on mid-game
+                    if { state.lock().unwrap().is_mock_active } {
+                        break; 
+                    }
+
+                    let sdk_active = *(p_buf as *const bool);
+                    
+                    if sdk_active {
+                        let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
+                        let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
+                        let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
+                        let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
+                        let temp = *(p_buf.add(TEMP_OFFSET) as *const f32);
+                        let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
+
+                        let _ = handle.emit("telemetry-update", serde_json::json!({
+                            "speed": (speed_ms * 3.6).abs(),
+                            "limit": (limit_ms * 3.6).abs(),
+                            "gear": gear,
+                            "fuel": fuel, 
+                            "temp": temp,
+                            "damage": (damage * 100.0).round()
+                        }));
+                    } else {
+                        if !sdk_error_logged {
+                            log_to_file("WAITING: Memory block found, but SDK is not sending data yet.");
+                            sdk_error_logged = true;
+                        }
+                        // If the game engine actually detaches the plugin, break the loop
+                        // to clean up the handles properly and wait for restart.
+                        last_connected_state = false;
+                        break;
+                    }
+                    
+                    std::thread::sleep(Duration::from_millis(16)); 
+                }
+
+                // 4. CLEANUP (Only runs if the game shuts down or mock is toggled)
+                UnmapViewOfFile(p_buf);
+                CloseHandle(h_map_file);
+            }
         }
     });
 }
