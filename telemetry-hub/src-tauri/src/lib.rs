@@ -13,7 +13,7 @@ use winapi::um::memoryapi::{OpenFileMappingW, MapViewOfFile, FILE_MAP_READ, Unma
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::errhandlingapi::GetLastError; 
 
-// 🎯 ZONE OFFSETS
+// 🎯 ZONE OFFSETS (Aligned with scs-telemetry-common.hpp)
 const SPEED_OFFSET: usize = 700;        
 const FUEL_OFFSET: usize = 752;         
 const TEMP_OFFSET: usize = 776;         
@@ -25,9 +25,8 @@ struct AppState {
     is_mock_active: bool,
 }
 
-// 📝 PRO LOGGER FUNCTION - Writes to Documents folder
+// 📝 PRO LOGGER FUNCTION - Writes to Windows Documents folder
 fn log_to_file(message: &str) {
-    // We use a safe path that Windows always allows: Your Documents Folder
     if let Ok(mut log_path) = std::env::var("USERPROFILE").map(std::path::PathBuf::from) {
         log_path.push("Documents");
         log_path.push("SimNation_Debug.log");
@@ -99,10 +98,10 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
         let mut name: Vec<u16> = name_str.encode_utf16().collect();
         name.push(0); 
 
-        log_to_file(&format!("THREAD START: Looking for mapping {}", name_str));
+        log_to_file("SERVICE START: Shared Memory Listener Initialized.");
 
         let mut last_connected_state = false;
-        let mut error_count = 0;
+        let mut sdk_error_logged = false;
 
         loop {
             let is_mock = { state.lock().unwrap().is_mock_active };
@@ -113,52 +112,57 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                 }));
             } else {
                 unsafe {
+                    // 1. Attempt to open mapping
                     let h_map_file = OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr());
                     
                     if h_map_file.is_null() {
                         if last_connected_state {
                             let err = GetLastError();
-                            log_to_file(&format!("LOST CONNECTION: Mapping NULL. WinErr: {}", err));
+                            log_to_file(&format!("LOST CONNECTION: Mapping vanished (WinErr {}). Waiting for game...", err));
                             last_connected_state = false;
                         }
-                    } else {
-                        let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
-                        
-                        if !p_buf.is_null() {
-                            let sdk_active = *(p_buf as *const bool);
-                            
-                            if sdk_active {
-                                if !last_connected_state {
-                                    log_to_file("SUCCESS: Connected to Shared Memory and SDK is ACTIVE");
-                                    last_connected_state = true;
-                                }
-
-                                let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
-                                let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
-                                let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
-                                let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
-                                let temp = *(p_buf.add(TEMP_OFFSET) as *const f32);
-                                let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
-
-                                let _ = handle.emit("telemetry-update", serde_json::json!({
-                                    "speed": (speed_ms * 3.6).abs(),
-                                    "limit": (limit_ms * 3.6).abs(),
-                                    "gear": gear,
-                                    "fuel": fuel, 
-                                    "temp": temp,
-                                    "damage": (damage * 100.0).round()
-                                }));
-                            } else {
-                                if error_count % 300 == 0 { // Log every ~5 seconds
-                                    log_to_file("WAITING: Memory found but SDK Active is false.");
-                                }
-                                error_count += 1;
-                                last_connected_state = false;
-                            }
-                            UnmapViewOfFile(p_buf);
-                        }
-                        CloseHandle(h_map_file);
+                        // Retry every 1s when game is not found
+                        std::thread::sleep(Duration::from_millis(1000));
+                        continue; 
                     }
+
+                    // 2. Map view
+                    let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
+                    if !p_buf.is_null() {
+                        let sdk_active = *(p_buf as *const bool);
+                        
+                        if sdk_active {
+                            if !last_connected_state {
+                                log_to_file("SUCCESS: Connected to Shared Memory and SDK is ACTIVE.");
+                                last_connected_state = true;
+                                sdk_error_logged = false;
+                            }
+
+                            let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
+                            let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
+                            let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
+                            let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
+                            let temp = *(p_buf.add(TEMP_OFFSET) as *const f32);
+                            let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
+
+                            let _ = handle.emit("telemetry-update", serde_json::json!({
+                                "speed": (speed_ms * 3.6).abs(),
+                                "limit": (limit_ms * 3.6).abs(),
+                                "gear": gear,
+                                "fuel": fuel, 
+                                "temp": temp,
+                                "damage": (damage * 100.0).round()
+                            }));
+                        } else {
+                            if !sdk_error_logged {
+                                log_to_file("WAITING: Memory block found, but SDK is not sending data yet.");
+                                sdk_error_logged = true;
+                            }
+                            last_connected_state = false;
+                        }
+                        UnmapViewOfFile(p_buf);
+                    }
+                    CloseHandle(h_map_file);
                 }
             }
             std::thread::sleep(Duration::from_millis(16)); 
