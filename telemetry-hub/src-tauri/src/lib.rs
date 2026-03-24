@@ -1,32 +1,43 @@
 use std::str::FromStr;
 use std::time::Duration;
 use std::sync::{Arc, Mutex}; 
-use tauri::{AppHandle, Emitter, Manager}; // Cleaned up unused imports
+use std::fs::OpenOptions;
+use std::io::Write; 
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use sysinfo::System;
 
-// 🛰️ WINDOWS API FOR RAW MEMORY READING
+// 🛰️ WINDOWS API
 use winapi::um::memoryapi::{OpenFileMappingW, MapViewOfFile, FILE_MAP_READ, UnmapViewOfFile};
 use winapi::um::handleapi::CloseHandle;
+use winapi::um::errhandlingapi::GetLastError; 
 
-// 🎯 ACCURATE ZONE OFFSETS (Verified against scs-telemetry-common.hpp)
-// Zone 4 (Floats) starts at 700. truck_f is the first struct in Zone 4.
-const SPEED_OFFSET: usize = 700;        // truck_f.speed (Offset 700)
-const FUEL_OFFSET: usize = 752;         // truck_f.fuel (Offset 700 + 52)
-const TEMP_OFFSET: usize = 776;         // truck_f.waterTemperature (Offset 700 + 76)
-const DAMAGE_OFFSET: usize = 788;       // truck_f.wearEngine (Offset 700 + 88)
-const LIMIT_OFFSET: usize = 820;        // truck_f.speedLimit (Offset 700 + 120)
+// 🎯 ZONE OFFSETS (Verified against scs-telemetry-common.hpp)
+const SPEED_OFFSET: usize = 700;        
+const FUEL_OFFSET: usize = 752;         
+const TEMP_OFFSET: usize = 776;         
+const DAMAGE_OFFSET: usize = 788;       
+const LIMIT_OFFSET: usize = 820;        
+const GEAR_OFFSET: usize = 504;         
 
-// Zone 3 (Integers) starts at 500. common_i (4 bytes) comes before truck_i.
-const GEAR_OFFSET: usize = 504;         // truck_i.gear (Offset 500 + 4)
-
-// --- 🧠 APP STATE ---
 struct AppState {
     is_mock_active: bool,
 }
 
-// --- 🎮 FRONTEND COMPATIBILITY COMMANDS ---
+// 📝 PRO LOGGER FUNCTION
+fn log_to_file(message: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("telemetry_debug.log") 
+    {
+        // 🚨 FIX: Using full path for chrono
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = writeln!(file, "[{}] {}", timestamp, message);
+    }
+}
+
 #[tauri::command]
 fn toggle_telemetry_mock(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> bool {
     let mut s = state.lock().unwrap();
@@ -39,7 +50,6 @@ fn install_telemetry_plugin() -> Result<String, String> {
     Ok("SCS Telemetry is active via SimNation Hub.".to_string())
 }
 
-// --- ⌨️ HOTKEY UPDATER ---
 #[tauri::command]
 fn update_hotkeys(
     app: AppHandle,
@@ -48,7 +58,6 @@ fn update_hotkeys(
     old_overlay: String, new_overlay: String,
 ) -> Result<(), String> {
     let manager = app.global_shortcut();
-    
     let unreg = |key: &String| {
         if !key.is_empty() {
             if let Ok(s) = Shortcut::from_str(key) { let _ = manager.unregister(s); }
@@ -70,13 +79,8 @@ fn update_hotkeys(
         let _ = manager.on_shortcut(new, move |handle: &AppHandle, _, event| { 
             if event.state == ShortcutState::Pressed {
                 if let Some(w) = handle.get_webview_window("radio_overlay") {
-                    let is_vis = w.is_visible().unwrap_or(false);
-                    if is_vis { let _ = w.hide(); } else { 
-                        let _ = w.show(); 
-                        let _ = w.unminimize();
-                        let _ = w.set_always_on_top(true);
-                        let _ = w.set_focus(); 
-                    }
+                    if w.is_visible().unwrap_or(false) { let _ = w.hide(); } 
+                    else { let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus(); }
                 }
             }
         });
@@ -84,36 +88,47 @@ fn update_hotkeys(
     Ok(())
 }
 
-// --- 🚛 RAW TELEMETRY LOOP ---
 fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
     std::thread::spawn(move || {
-        // 🚨 PRO FIX: UTF-16 encoding for the Windows Shared Memory name
-        let name_str = "Local\\SCSTelemetry";
+        let name_str = "Local\\SCSTelemetry"; 
         let mut name: Vec<u16> = name_str.encode_utf16().collect();
         name.push(0); 
 
+        log_to_file(&format!("THREAD START: Looking for mapping {}", name_str));
+
+        let mut last_connected_state = false;
+        let mut error_count = 0;
+
         loop {
-            let is_mock = {
-                let s = state.lock().unwrap();
-                s.is_mock_active
-            };
+            let is_mock = { state.lock().unwrap().is_mock_active };
 
             if is_mock {
-                // ... (Mock logic remains the same as it works)
                 let _ = handle.emit("telemetry-update", serde_json::json!({
                     "speed": 65, "limit": 80, "gear": 12, "fuel": 85, "temp": 90, "damage": 0
                 }));
             } else {
                 unsafe {
                     let h_map_file = OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr());
-                    if !h_map_file.is_null() {
+                    
+                    if h_map_file.is_null() {
+                        if last_connected_state {
+                            let err = GetLastError();
+                            log_to_file(&format!("LOST CONNECTION: Mapping NULL. WinErr: {}", err));
+                            last_connected_state = false;
+                        }
+                    } else {
                         let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
+                        
                         if !p_buf.is_null() {
-                            // 🏁 Check 'sdkActive' at Byte 0
                             let sdk_active = *(p_buf as *const bool);
                             
                             if sdk_active {
-                                // 📐 Precision Offset Reading
+                                if !last_connected_state {
+                                    log_to_file("SUCCESS: Connected to Shared Memory and SDK is ACTIVE");
+                                    last_connected_state = true;
+                                }
+
+                                // 🚨 Variables synced with constant names
                                 let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
                                 let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
                                 let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
@@ -129,6 +144,12 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                                     "temp": temp,
                                     "damage": (damage * 100.0).round()
                                 }));
+                            } else {
+                                if error_count % 100 == 0 { // Log every ~1.6 seconds to avoid massive files
+                                    log_to_file("WAITING: Memory found but SDK Active is false.");
+                                }
+                                error_count += 1;
+                                last_connected_state = false;
                             }
                             UnmapViewOfFile(p_buf);
                         }
@@ -153,28 +174,23 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(move |app| {
             let handle = app.handle().clone();
-
             start_telemetry_loop(handle.clone(), app_state.clone());
-
+            
             // 🔍 Game Detection Loop
             std::thread::spawn(move || {
                 let mut sys = System::new_all();
                 let games = ["eurotrucks2", "amtrucks"];
                 let mut was_running = false;
-                
                 loop {
                     sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
                     let is_running = sys.processes().values().any(|p| {
                         let n = p.name().to_string_lossy().to_lowercase();
                         games.iter().any(|&g| n.contains(g))
                     });
-
                     if is_running && !was_running {
                         if let Some(w) = handle.get_webview_window("main") { let _ = w.show(); }
                         if let Some(w) = handle.get_webview_window("radio_overlay") { 
-                            let _ = w.show(); 
-                            let _ = w.unminimize();
-                            let _ = w.set_always_on_top(true);
+                            let _ = w.show(); let _ = w.unminimize(); let _ = w.set_always_on_top(true);
                         }
                         was_running = true;
                     } else if !is_running && was_running {
