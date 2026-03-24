@@ -142,6 +142,8 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                     sdk_error_logged = false;
                 }
 
+                let mut tick_counter = 0;
+
                 // 3. INNER LOOP: Read continuously without closing handles
                 loop {
                     // Break if mock is turned on mid-game
@@ -152,20 +154,37 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                     let sdk_active = *(p_buf as *const bool);
                     
                     if sdk_active {
-                        let speed_ms = *(p_buf.add(SPEED_OFFSET) as *const f32);
-                        let limit_ms = *(p_buf.add(LIMIT_OFFSET) as *const f32);
-                        let gear = *(p_buf.add(GEAR_OFFSET) as *const i32);
-                        let fuel = *(p_buf.add(FUEL_OFFSET) as *const f32);
-                        let temp = *(p_buf.add(TEMP_OFFSET) as *const f32);
-                        let damage = *(p_buf.add(DAMAGE_OFFSET) as *const f32);
+                        // 🛑 PRO FIX: Force 1-Byte Pointer Math to get the right offsets
+                        let base_ptr = p_buf as *const u8;
+                        
+                        let speed_ms = *(base_ptr.add(SPEED_OFFSET) as *const f32);
+                        let limit_ms = *(base_ptr.add(LIMIT_OFFSET) as *const f32);
+                        let gear = *(base_ptr.add(GEAR_OFFSET) as *const i32);
+                        let fuel = *(base_ptr.add(FUEL_OFFSET) as *const f32);
+                        let temp = *(base_ptr.add(TEMP_OFFSET) as *const f32);
+                        let damage = *(base_ptr.add(DAMAGE_OFFSET) as *const f32);
+
+                        // 🛑 PRO FIX: NaN Protection (Prevents JSON serialization crashes)
+                        let safe_speed = if speed_ms.is_nan() { 0.0 } else { (speed_ms * 3.6).abs() };
+                        let safe_limit = if limit_ms.is_nan() { 0.0 } else { (limit_ms * 3.6).abs() };
+                        let safe_damage = if damage.is_nan() { 0.0 } else { (damage * 100.0).round() };
+                        let safe_fuel = if fuel.is_nan() { 0.0 } else { fuel };
+                        let safe_temp = if temp.is_nan() { 0.0 } else { temp };
+
+                        // 🛑 PRO FIX: Diagnostic Pulse (Logs data every ~2 seconds)
+                        tick_counter += 1;
+                        if tick_counter >= 120 {
+                            log_to_file(&format!("DATA PULSE -> Speed: {:.1} | Gear: {} | Fuel: {:.1}", safe_speed, gear, safe_fuel));
+                            tick_counter = 0;
+                        }
 
                         let _ = handle.emit("telemetry-update", serde_json::json!({
-                            "speed": (speed_ms * 3.6).abs(),
-                            "limit": (limit_ms * 3.6).abs(),
+                            "speed": safe_speed,
+                            "limit": safe_limit,
                             "gear": gear,
-                            "fuel": fuel, 
-                            "temp": temp,
-                            "damage": (damage * 100.0).round()
+                            "fuel": safe_fuel, 
+                            "temp": safe_temp,
+                            "damage": safe_damage
                         }));
                     } else {
                         if !sdk_error_logged {
