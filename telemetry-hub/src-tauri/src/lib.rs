@@ -8,24 +8,43 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use sysinfo::System;
 
+// 🧰 NEW: System Tray Imports
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+
 // 🛰️ WINDOWS API
 use winapi::um::memoryapi::{OpenFileMappingW, MapViewOfFile, FILE_MAP_READ, UnmapViewOfFile};
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::errhandlingapi::GetLastError; 
 
 // 🎯 ZONE OFFSETS (Perfectly Aligned to 64-bit scsTelemetryMap_t)
-const SPEED_OFFSET: usize = 948;        // truck_f.speed
-const FUEL_OFFSET: usize = 1000;        // truck_f.fuel
-const TEMP_OFFSET: usize = 1024;        // truck_f.waterTemperature
-const LIMIT_OFFSET: usize = 1068;       // truck_f.speedLimit
-const DAMAGE_OFFSET: usize = 1468;      // job_f.cargoDamage
-const GEAR_OFFSET: usize = 504;         // truck_i.gear (Unchanged)
+const GEAR_OFFSET: usize = 504;         
+const SPEED_OFFSET: usize = 948;        
+const RPM_OFFSET: usize = 952;          
+const CRUISE_OFFSET: usize = 988;       
+const FUEL_OFFSET: usize = 1000;        
+const TEMP_OFFSET: usize = 1024;        
+const ODOMETER_OFFSET: usize = 1056;    
+const ROUTE_DIST_OFFSET: usize = 1060;  
+const ROUTE_TIME_OFFSET: usize = 1064;  
+const LIMIT_OFFSET: usize = 1068;       
+
+// 💥 DAMAGE OFFSETS
+const WEAR_ENGINE: usize = 1036;
+const WEAR_TRANSMISSION: usize = 1040;
+const WEAR_CABIN: usize = 1044;
+const WEAR_CHASSIS: usize = 1048;
+const WEAR_WHEELS: usize = 1052;
+const TRAILER_CHASSIS: usize = 6156;
+const TRAILER_WHEELS: usize = 6160;
+const TRAILER_BODY: usize = 6164;
+const CARGO_DAMAGE: usize = 1468;
 
 struct AppState {
     is_mock_active: bool,
 }
 
-// 📝 PRO LOGGER FUNCTION - Writes to Windows Documents folder
+// 📝 PRO LOGGER FUNCTION
 fn log_to_file(message: &str) {
     if let Ok(mut log_path) = std::env::var("USERPROFILE").map(std::path::PathBuf::from) {
         log_path.push("Documents");
@@ -108,14 +127,14 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
 
             if is_mock {
                 let _ = handle.emit("telemetry-update", serde_json::json!({
-                    "speed": 65, "limit": 80, "gear": 12, "fuel": 85, "temp": 90, "damage": 0
+                    "speed": 65, "limit": 80, "gear": 12, "fuel": 85, "temp": 90, "damage": 0,
+                    "rpm": 1200, "routeDistance": 150.5, "routeTime": 5400, "cruiseControl": 65, "odometer": 12050
                 }));
                 std::thread::sleep(Duration::from_millis(16));
                 continue;
             }
 
             unsafe {
-                // 1. OPEN HANDLE ONCE
                 let h_map_file = OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr());
                 
                 if h_map_file.is_null() {
@@ -128,7 +147,6 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                     continue; 
                 }
 
-                // 2. MAP VIEW ONCE
                 let p_buf = MapViewOfFile(h_map_file, FILE_MAP_READ, 0, 0, 0);
                 if p_buf.is_null() {
                     CloseHandle(h_map_file);
@@ -144,9 +162,7 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
 
                 let mut tick_counter = 0;
 
-                // 3. INNER LOOP: Read continuously without closing handles
                 loop {
-                    // Break if mock is turned on mid-game
                     if { state.lock().unwrap().is_mock_active } {
                         break; 
                     }
@@ -154,27 +170,49 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                     let sdk_active = *(p_buf as *const bool);
                     
                     if sdk_active {
-                        // 🛑 PRO FIX: Force 1-Byte Pointer Math to get the right offsets
                         let base_ptr = p_buf as *const u8;
                         
+                        let gear = *(base_ptr.add(GEAR_OFFSET) as *const i32);
                         let speed_ms = *(base_ptr.add(SPEED_OFFSET) as *const f32);
                         let limit_ms = *(base_ptr.add(LIMIT_OFFSET) as *const f32);
-                        let gear = *(base_ptr.add(GEAR_OFFSET) as *const i32);
                         let fuel = *(base_ptr.add(FUEL_OFFSET) as *const f32);
                         let temp = *(base_ptr.add(TEMP_OFFSET) as *const f32);
-                        let damage = *(base_ptr.add(DAMAGE_OFFSET) as *const f32);
+                        
+                        let rpm = *(base_ptr.add(RPM_OFFSET) as *const f32);
+                        let cruise_ms = *(base_ptr.add(CRUISE_OFFSET) as *const f32);
+                        let odometer_km = *(base_ptr.add(ODOMETER_OFFSET) as *const f32);
+                        let route_dist_m = *(base_ptr.add(ROUTE_DIST_OFFSET) as *const f32);
+                        let route_time_s = *(base_ptr.add(ROUTE_TIME_OFFSET) as *const f32);
 
-                        // 🛑 PRO FIX: NaN Protection (Prevents JSON serialization crashes)
+                        let w_eng = *(base_ptr.add(WEAR_ENGINE) as *const f32);
+                        let w_tra = *(base_ptr.add(WEAR_TRANSMISSION) as *const f32);
+                        let w_cab = *(base_ptr.add(WEAR_CABIN) as *const f32);
+                        let w_cha = *(base_ptr.add(WEAR_CHASSIS) as *const f32);
+                        let w_whl = *(base_ptr.add(WEAR_WHEELS) as *const f32);
+                        let t_cha = *(base_ptr.add(TRAILER_CHASSIS) as *const f32);
+                        let t_whl = *(base_ptr.add(TRAILER_WHEELS) as *const f32);
+                        let t_bod = *(base_ptr.add(TRAILER_BODY) as *const f32);
+                        let c_dam = *(base_ptr.add(CARGO_DAMAGE) as *const f32);
+
+                        let mut damages = vec![w_eng, w_tra, w_cab, w_cha, w_whl, t_cha, t_whl, t_bod, c_dam];
+                        let max_damage = damages.into_iter()
+                            .filter(|d| !d.is_nan()) 
+                            .fold(0.0_f32, |a, b| a.max(b)); 
+
                         let safe_speed = if speed_ms.is_nan() { 0.0 } else { (speed_ms * 3.6).abs() };
                         let safe_limit = if limit_ms.is_nan() { 0.0 } else { (limit_ms * 3.6).abs() };
-                        let safe_damage = if damage.is_nan() { 0.0 } else { (damage * 100.0).round() };
+                        let safe_cruise = if cruise_ms.is_nan() { 0.0 } else { (cruise_ms * 3.6).abs() };
+                        let safe_damage = (max_damage * 100.0).round();
                         let safe_fuel = if fuel.is_nan() { 0.0 } else { fuel };
                         let safe_temp = if temp.is_nan() { 0.0 } else { temp };
+                        let safe_rpm = if rpm.is_nan() { 0.0 } else { rpm };
+                        
+                        let dist_km = if route_dist_m.is_nan() || route_dist_m < 0.0 { 0.0 } else { route_dist_m / 1000.0 };
+                        let time_mins = if route_time_s.is_nan() || route_time_s < 0.0 { 0.0 } else { route_time_s / 60.0 };
 
-                        // 🛑 PRO FIX: Diagnostic Pulse (Logs data every ~2 seconds)
                         tick_counter += 1;
                         if tick_counter >= 120 {
-                            log_to_file(&format!("DATA PULSE -> Speed: {:.1} | Gear: {} | Fuel: {:.1}", safe_speed, gear, safe_fuel));
+                            log_to_file(&format!("DATA PULSE -> Speed: {:.1} | Gear: {} | GPS Dist: {:.1}km", safe_speed, gear, dist_km));
                             tick_counter = 0;
                         }
 
@@ -184,15 +222,18 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                             "gear": gear,
                             "fuel": safe_fuel, 
                             "temp": safe_temp,
-                            "damage": safe_damage
+                            "damage": safe_damage,
+                            "rpm": safe_rpm,
+                            "cruiseControl": safe_cruise,
+                            "odometer": odometer_km,
+                            "routeDistance": dist_km,
+                            "routeTime": time_mins
                         }));
                     } else {
                         if !sdk_error_logged {
                             log_to_file("WAITING: Memory block found, but SDK is not sending data yet.");
                             sdk_error_logged = true;
                         }
-                        // If the game engine actually detaches the plugin, break the loop
-                        // to clean up the handles properly and wait for restart.
                         last_connected_state = false;
                         break;
                     }
@@ -200,7 +241,6 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                     std::thread::sleep(Duration::from_millis(16)); 
                 }
 
-                // 4. CLEANUP (Only runs if the game shuts down or mock is toggled)
                 UnmapViewOfFile(p_buf);
                 CloseHandle(h_map_file);
             }
@@ -219,6 +259,30 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--silent"])))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(move |app| {
+            
+            // 🧰 NEW: Setup System Tray Menu
+            let quit_i = MenuItem::with_id(app, "quit", "Quit SimNation", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Show Hub", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            // 🧰 NEW: Build the System Tray
+            if let Some(icon) = app.default_window_icon().cloned() {
+                let _tray = TrayIconBuilder::new()
+                    .icon(icon)
+                    .menu(&menu)
+                    .on_menu_event(move |app, event| match event.id.as_ref() {
+                        "quit" => std::process::exit(0),
+                        "show" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        _ => {}
+                    })
+                    .build(app)?;
+            }
+
             let handle = app.handle().clone();
             start_telemetry_loop(handle.clone(), app_state.clone());
             
