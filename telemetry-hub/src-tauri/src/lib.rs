@@ -130,7 +130,8 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                     "speed": 65, "limit": 80, "gear": 12, "fuel": 85, "temp": 90, "damage": 0,
                     "rpm": 1200, "routeDistance": 150.5, "routeTime": 5400, "cruiseControl": 65, "odometer": 12050
                 }));
-                std::thread::sleep(Duration::from_millis(16));
+                // 🛑 PRO FIX: Throttled to ~30fps
+                std::thread::sleep(Duration::from_millis(33));
                 continue;
             }
 
@@ -211,7 +212,7 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                         let time_mins = if route_time_s.is_nan() || route_time_s < 0.0 { 0.0 } else { route_time_s / 60.0 };
 
                         tick_counter += 1;
-                        if tick_counter >= 120 {
+                        if tick_counter >= 60 { // Adjusted log pulse to match the new 30fps rate
                             log_to_file(&format!("DATA PULSE -> Speed: {:.1} | Gear: {} | GPS Dist: {:.1}km", safe_speed, gear, dist_km));
                             tick_counter = 0;
                         }
@@ -238,7 +239,8 @@ fn start_telemetry_loop(handle: AppHandle, state: Arc<Mutex<AppState>>) {
                         break;
                     }
                     
-                    std::thread::sleep(Duration::from_millis(16)); 
+                    // 🛑 PRO FIX: Throttled to ~30fps to stop IPC Flooding to the frontend
+                    std::thread::sleep(Duration::from_millis(33)); 
                 }
 
                 UnmapViewOfFile(p_buf);
